@@ -1,0 +1,38 @@
+modules:
+  jira:issueAction:
+    - key: ancom-jira-ce-report-issue-action
+      resource: main
+      resolver:
+        function: resolver
+      viewportSize: large
+      title: Ancom Jira CE Report
+  jira:adminPage:
+    - key: ancom-jira-ce-report-admin-page
+      resource: main
+      resolver:
+        function: resolver
+      title: Ancom Jira CE Report
+      useAsConfig: true
+  function:
+    - key: resolver
+      handler: index.handler
+resources:
+  - key: main
+    path: static/hello-world/build
+app:
+  id: ari:cloud:ecosystem::app/922ff542-07f0-4bbd-9367-88f261fbc068
+permissions:
+  scopes:
+    - 'read:jira-work'
+    - 'write:jira-work'
+    - 'storage:app'
+    - read:issue-details:jira
+    - read:application-role:jira
+    - read:group:jira
+    - read:user:jira
+    - read:avatar:jira
+  external:
+    fetch:
+      backend:
+        - 'https://api.tempo.io'
+        - 'https://*.atlassian.net'
