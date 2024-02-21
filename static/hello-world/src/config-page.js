@@ -52,6 +52,7 @@ const ConfigPage = () => {
             let base64_png_signature = signpad.getTrimmedCanvas().toDataURL('image/png');
             currentJiraUser.b64Signature = base64_png_signature;
             setCurrentJiraUser(null);
+            signpad.clear();
         }
         else {
             setGlobalError("Signpad not defined");
@@ -137,12 +138,12 @@ const ConfigPage = () => {
                             </fieldset>
                         </div>
                     )}
-                    {currentJiraUser && (
-                        <div>
-                        <SignatureCanvas penColor='black' canvasProps={{ width: 600, height: 200, className: 'sigCanvas' }} ref={(ref) => { signpad = ref; }} />
-                        <button onClick={handleCurrentJiraUserSignatureAccept}>Update Signature {currentJiraUser.displayName}</button>
-                        </div>
-                    )}
+                    
+                    <div style={{display:currentJiraUser ? 'initial':"none"}}>
+                    <SignatureCanvas penColor='black' canvasProps={{ width: 600, height: 200, className: 'sigCanvas' }} ref={(ref) => { signpad = ref; }} />
+                    {currentJiraUser && (<button onClick={handleCurrentJiraUserSignatureAccept}>Update Signature {currentJiraUser.displayName}</button>)}
+                    </div>
+                    
                 </li>
                 <li><h3>Tempo Key</h3>
                     {/* Tempo Key Input and Test */}
