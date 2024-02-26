@@ -139,9 +139,9 @@ resolver.define('setJiraUserSignatures', async ({ payload, context }) => {
   
   if (typeof payload == "string") payload = JSON.parse(payload);
 
-  var jiraUserSignatures = (await Storage.get('jira-user-signatures')) || [];
+  var jiraUserSignatures = (await storage.get('jira-user-signatures')) || [];
 
-  return await Storage.set('jira-user-signatures', payload);
+  return await storage.set('jira-user-signatures', payload);
 
 })
 

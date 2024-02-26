@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import SignatureCanvas from 'react-signature-canvas';
 import { invoke } from '@forge/bridge';
 
@@ -9,21 +9,19 @@ const ConfigPage = () => {
     const [jiraUserSignatures, setJiraUserSignatures] = useState(null);
     const [globalError, setGlobalError] = useState(null);
     const [currentJiraUser,setCurrentJiraUser] = useState(null);
-    var signpad = {};
+    const signpadRef = useRef(null);
 
     useEffect(() => {
         invoke('getTempoKey').then(setTempoKey).catch(setGlobalError);
-        //invoke('getTempoAuthData').then(setTempoAuthData).catch(setGlobalError);
-        //
-    });
+    }, []);
 
     useEffect(() => {
         invoke('getTempoAuthData').then(setTempoAuthData).catch(setGlobalError);
-    })
+    }, []);
 
     useEffect(() => {
         invoke('getJiraUserSignatures').then(setJiraUserSignatures).catch(setGlobalError);
-    })
+    }, []);
 
 
     const saveJiraUserSignatures = () => {
@@ -32,7 +30,6 @@ const ConfigPage = () => {
             const b64Signature = b64SignInput.value;
             return { accountId, b64Signature };
         });
-        // Assuming there's a backend call or similar to actually save the signatures
     };
 
     const storeTempoKey = () => {
@@ -48,11 +45,12 @@ const ConfigPage = () => {
 
 
     const handleCurrentJiraUserSignatureAccept = ()=> {
-        if (signpad){
-            let base64_png_signature = signpad.getTrimmedCanvas().toDataURL('image/png');
+        if (signpadRef.current){
+            let base64_png_signature = signpadRef.current.getTrimmedCanvas().toDataURL('image/png');
             currentJiraUser.b64Signature = base64_png_signature;
+            invoke('setJiraUserSignatures', jiraUserSignatures).catch(setGlobalError);
             setCurrentJiraUser(null);
-            signpad.clear();
+            signpadRef.current.clear();
         }
         else {
             setGlobalError("Signpad not defined");
@@ -60,10 +58,9 @@ const ConfigPage = () => {
     }
 
     const handleSetCurrentJiraUser = (userItem)=>{
-
         setCurrentJiraUser(userItem);
-        if (userItem.b64Signature && signpad){
-            signpad.fromDataURL(userItem.b64Signature);
+        if (userItem.b64Signature && signpadRef.current){
+            signpadRef.current.fromDataURL(userItem.b64Signature);
         }
     }
 
@@ -130,7 +127,7 @@ const ConfigPage = () => {
                                 <ul>
                                     {jiraUserSignatures && jiraUserSignatures.map(item => (
                                         <li key={item.accountId}>
-                                            <label><a onClick={function() {handleSetCurrentJiraUser(item)}}> {item.displayName}</a><input name="signature" data-account-id={item.accountId} defaultValue={item.b64signature} type="text" /></label><br />
+                                            <label><a onClick={() => handleSetCurrentJiraUser(item)}> {item.displayName}</a><input name="signature" data-account-id={item.accountId} defaultValue={item.b64signature} type="text" /></label><br />
                                         </li>
                                     ))}
                                 </ul>
@@ -140,13 +137,14 @@ const ConfigPage = () => {
                     )}
                     
                     <div style={{display:currentJiraUser ? 'initial':"none"}}>
-                    <SignatureCanvas penColor='black' canvasProps={{ width: 600, height: 200, className: 'sigCanvas' }} ref={(ref) => { signpad = ref; }} />
+                    <div style={{ borderColor: "black", borderStyle: "solid", borderWidth: "2px;", backgroundColor: "gray", padding: "2em" }}>
+                    <SignatureCanvas penColor='black' backgroundColor='white' canvasProps={{  width: 600, height: 200, className: 'sigCanvas' }} ref={signpadRef} />
                     {currentJiraUser && (<button onClick={handleCurrentJiraUserSignatureAccept}>Update Signature {currentJiraUser.displayName}</button>)}
+                    </div>
                     </div>
                     
                 </li>
                 <li><h3>Tempo Key</h3>
-                    {/* Tempo Key Input and Test */}
                     <label>Tempo Key: {tempoKey ? tempoKey : 'No Key Yet'} <input id="tempo-key-input" defaultValue={tempoKey} type="text" /></label><br />
                     <button onClick={storeTempoKey}>Save</button>
                     <button onClick={testTempoKey}>Test</button>
