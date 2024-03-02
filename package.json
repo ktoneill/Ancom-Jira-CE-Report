@@ -9,6 +9,11 @@
     "eslint-plugin-react-hooks": "^4.6.0"
   },
   "dependencies": {
-    "@forge/resolver": "1.5.25"
+    "@atlaskit/button": "^17.6.0",
+    "@atlaskit/css-reset": "^6.6.2",
+    "@atlaskit/tokens": "^1.38.0",
+    "@forge/resolver": "1.5.25",
+    "react": "16.8",
+    "react-dom": "16.8"
   }
 }

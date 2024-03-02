@@ -16,9 +16,7 @@ function App() {
   switch (context && context.moduleKey) {
     case 'ancom-jira-ce-report-admin-page':
       // Render "ConfigPage" if we are in module "admin-page"
-      return <div><h3>{context.moduleKey}</h3>
-        <ConfigPage></ConfigPage>
-        </div>;
+      return <ConfigPage/>;
     case 'ancom-jira-ce-report-issue-action':
       // Render "ReportPage" if we are in module "issue-panel"
       return <ReportPage />;

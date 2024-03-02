@@ -111,7 +111,7 @@ resolver.define('getIssueKey', ({ payload, context }) => {
 
 })
 
-resolver.define('getJiraUserSignatures', async ({ payload, context }) => {
+const getJiraUserSignatures = async ({ payload, context }) => {
   
   try {
     var users = [];
@@ -134,12 +134,14 @@ resolver.define('getJiraUserSignatures', async ({ payload, context }) => {
     console.error("getJiraUserSignatures",e);
     return [{accountId:"fake",displayName:"error",b64Signature:JSON.stringify(e||'error')}];
   }
-})
+}
+
+resolver.define('getJiraUserSignatures', getJiraUserSignatures);
 resolver.define('setJiraUserSignatures', async ({ payload, context }) => {
-  
+  console.debug("setJiraUserSignatures", payload);
   if (typeof payload == "string") payload = JSON.parse(payload);
 
-  var jiraUserSignatures = (await storage.get('jira-user-signatures')) || [];
+  
 
   return await storage.set('jira-user-signatures', payload);
 
@@ -212,10 +214,14 @@ resolver.define('getFormattedWorklogs', async ({ payload, context }) => {
     }
 
 
+    const jiraSignatures = await getJiraUserSignatures({ payload: null, context });
+
 
     async function resolveJiraAccount(accountId) {
       //todo: storage of accountId;
-      return (await api.asApp().requestJira(route`/rest/api/2/user?accountId=${accountId}`).then(r => r.json()));
+      //return 
+
+      return jiraSignatures.find(js => js.accountId == accountId) || (await api.asApp().requestJira(route`/rest/api/2/user?accountId=${accountId}`).then(r => r.json()));
     }
 
     tempoLogs = await Promise.all(tempoLogs.results.map(async (tempoLog) => {
@@ -231,6 +237,7 @@ resolver.define('getFormattedWorklogs', async ({ payload, context }) => {
         }
         var authorResolved = await resolveJiraAccount(tempoLog.author.accountId);
         tempoLog.author.displayName = authorResolved.displayName;
+        tempoLog.author.b64Signature = authorResolved.b64Signature;
         console.debug("authorResolved", authorResolved);
       }
       catch (ee) {
@@ -256,6 +263,7 @@ resolver.define('getFormattedWorklogs', async ({ payload, context }) => {
         return {
           who: (tempoLog && tempoLog.author.displayName) || worklog.author.displayName,
           worker: (tempoLog && tempoLog.author.displayName) || worklog.author.displayName,
+          signature: (tempoLog && tempoLog.author.b64Signature) || null,
           from: started.toLocaleString(),
           "date": `${started.getMonth() + 1}/${started.getDate()}`,
           "time-in": started.toTimeString().replace(/(\d\d:\d\d):\d\d.*/, "$1"),
@@ -269,6 +277,7 @@ resolver.define('getFormattedWorklogs', async ({ payload, context }) => {
         return {
           who: worklog.author.displayName,
           worker: worklog.author.displayName,
+          
           from: started.toLocaleString(),
           "date": `${started.getMonth() + 1}/${started.getDate()}`,
           "time-in": started.toTimeString().replace(/(\d\d:\d\d):\d\d.*/, "$1"),

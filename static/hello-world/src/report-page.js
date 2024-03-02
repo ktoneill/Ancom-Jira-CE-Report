@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { invoke, view,requestJira } from '@forge/bridge';
+import { invoke, view, requestJira } from '@forge/bridge';
 import SignatureCanvas from 'react-signature-canvas';
 import { PDFDocument, rgb, PageSizes } from 'pdf-lib';
 import FormData from 'form-data';
@@ -47,88 +47,108 @@ const ReportPage = () => {
         const cellPadding = 8;
         const cellHeight = 30;
         const columnWidths = [.05, .05, .10, .15, .05, .05, .05, .05, .05, .30].map(per => per * page.getWidth()); // Adjust widths as per your needs
-      
+
         page.drawText(`12.1 HCPS MAINTENANCE CONTRACTOR SIGN-IN SHEET`, {
-          x: 50,
-          y: startY,
-          size: 20
+            x: 50,
+            y: startY,
+            size: 20
         });
         startY -= 20;
         page.drawText(`Maintenance Sign-in Sheet: The bill-to department shall verify all information on this Maintenance Contractor Sign-in Sheet.\nWhen project is completed, fax the MR form to the maintenance office that wrote the purchase order.\nAssuring accuracy of work completetion will enable HCPS to issue timely payments.`, {
-          x: 50,
-          y: startY,
-          size: 10,
-          lineHeight: 12
+            x: 50,
+            y: startY,
+            size: 10,
+            lineHeight: 12
         });
-      
+
         startY -= 30;
         let header = ['Date', 'Time\nIn', 'Worker', 'Signature', 'Time\nOut', 'Lunch', 'Total Reg hrs', 'OT\nhrs', 'JLA\n&\nID\nConfirmed\nby\nschool\nstaff\ninitials', 'HCPS representative signature and print and title'];
         let rowsFromWorklog = worklogData.map(r => { r["hcps-signature"] = `Title  ${signerTitle}    Print  ${signerPrint}\nSignature`; return r; })
-          .map(r => { return [r.date, r["time-in"], r["worker"], "", r["time-out"], "", "", "", "", r["hcps-signature"]] });
-      
+            .map(r => { return [r.date, r["time-in"], r["worker"], "", r["time-out"], "", "", "", "", r["hcps-signature"]] });
+
         let tableData = [header].concat(rowsFromWorklog);
-      
+
         tableData.forEach((row, rowIndex) => {
-          let offsetX = 45; // Starting X position
-          var cellHeightI = cellHeight;
-      
-          if (rowIndex == 0) {
-            cellHeightI = 100;
-          }
-      
-          row.forEach(async (cell, cellIndex) => {
-      
-      
-      
-      
-            // Draw cell text
-            page.drawText(cell, {
-              x: offsetX + cellPadding,
-              y: (startY - cellPadding) - 8,
-              size: 10,
-              color: rgb(0, 0, 0),
-              lineHeight: 10,
-              maxWidth: columnWidths[cellIndex]
-      
-            });
-            // Draw cell border
-            page.drawRectangle({
-              x: offsetX,
-              y: startY - cellHeightI,
-              width: columnWidths[cellIndex],
-              height: cellHeightI,
-              borderColor: rgb(0, 0, 0),
-              borderWidth: 1,
-            });
-      
-            if (cellIndex == row.length - 1 && rowIndex != 0) {
-      
-              const pngDims = pngSignatureImage.scale(.5);
-              page.drawImage(pngSignatureImage, {
-                x: offsetX + 80,
-                y: startY - (2 * (cellHeightI * .5)),
-                width: 80,
-                height: 35,
-              });
-      
-              page.drawImage(pngInitialsImage, {
-                x: offsetX - 40,
-                y: startY - (2 * (cellHeightI * .5)),
-                width: 40,
-                height: 20,
-              });
-      
+            let offsetX = 45; // Starting X position
+            var cellHeightI = cellHeight;
+
+            if (rowIndex == 0) {
+                cellHeightI = 100;
             }
-      
-            offsetX += columnWidths[cellIndex]; // Move to next cell in the row
-          });
-      
-          startY -= cellHeightI; // Move to next row
+
+            row.forEach(async (cell, cellIndex) => {
+
+
+
+
+                // Draw cell text
+                page.drawText(cell, {
+                    x: offsetX + cellPadding,
+                    y: (startY - cellPadding) - 8,
+                    size: 10,
+                    color: rgb(0, 0, 0),
+                    lineHeight: 10,
+                    maxWidth: columnWidths[cellIndex]
+
+                });
+                // Draw cell border
+                page.drawRectangle({
+                    x: offsetX,
+                    y: startY - cellHeightI,
+                    width: columnWidths[cellIndex],
+                    height: cellHeightI,
+                    borderColor: rgb(0, 0, 0),
+                    borderWidth: 1,
+                });
+
+                if (cellIndex == 3 && rowIndex != 0) {
+                    try {
+                        //console.log("Drawing signature", worklogData[rowIndex-1].signature);
+                        if (worklogData[rowIndex-1] && worklogData[rowIndex-1].signature) {
+                            page.drawImage(worklogData[rowIndex-1].signature, {
+                                x: offsetX,
+                                y: startY - cellHeightI,
+                                width: columnWidths[cellIndex],
+                                height: cellHeightI,
+                            });
+                        }
+                    }
+                    catch (e) {
+                        //console.error("Error drawing signature", e);
+                    }
+                }
+
+                if (cellIndex == row.length - 1 && rowIndex != 0) {
+
+                    
+
+
+                    const pngDims = pngSignatureImage.scale(.5);
+                    page.drawImage(pngSignatureImage, {
+                        x: offsetX + 80,
+                        y: startY - (2 * (cellHeightI * .5)),
+                        width: 80,
+                        height: 35,
+                    });
+
+                    page.drawImage(pngInitialsImage, {
+                        x: offsetX - 40,
+                        y: startY - (2 * (cellHeightI * .5)),
+                        width: 40,
+                        height: 20,
+                    });
+
+                }
+
+                offsetX += columnWidths[cellIndex]; // Move to next cell in the row
+            });
+
+            startY -= cellHeightI; // Move to next row
         });
-      
-      
-      
-      }
+
+
+
+    }
 
     const getWorkorderScanAttachmentAsBuffer = async function (issueData) {
         console.log("getWorkorderScanAttachmentAsBuffer", JSON.stringify(issueData));
@@ -165,14 +185,14 @@ const ReportPage = () => {
             let pdfScan = await getWorkorderScanAttachmentAsBuffer(issueData);
             console.debug("handleSubmission:getWorkorderScanAttachmentAsBuffer:pdfScan");
 
-           
+
             if (!tempoLogs) {
                 throw "No Tempo logs";
             }
             let adjustedPDF = await addWorklogTableToPdf(pdfScan, tempoLogs, signatureb64, initialsb64, signaturetitle, signaturename, issueData.fields.customfield_10058, issueData.fields.customfield_10038);
             console.debug("handledSubmission:addWorklogTableToPdf:adjustedPDF");
-            
-            let savedPDF =  new Blob([adjustedPDF], { type: 'application/pdf' });
+
+            let savedPDF = new Blob([adjustedPDF], { type: 'application/pdf' });
             formData.append('file', savedPDF, `Report-${issueData.fields.customfield_10038}.pdf`);
             //formData.append('fileName',"cereport.pdf");
             requestJira(`/rest/api/2/issue/${issueKey}/attachments`, {
@@ -214,6 +234,9 @@ const ReportPage = () => {
     };
 
     async function addWorklogTableToPdf(pdfBytes, allWorklogData, signatureb64, initialsb64, signatureTitle, signatureName, siteName, woNumber) {
+        console.log("addWorklogTableToPdf:loading bytes of pdf");
+        const pdfDoc = await PDFDocument.load(pdfBytes);
+        
         async function addSignatureLine(page) {
             let signatureLineData = {
                 x: 20,
@@ -239,8 +262,7 @@ const ReportPage = () => {
                 height: 40,
             });
         }
-        console.log("addWorklogTableToPdf:loading bytes of pdf");
-        const pdfDoc = await PDFDocument.load(pdfBytes);
+        
         var workOrderPage = pdfDoc.getPage(0);
 
         const halfWhiteBox = {
@@ -312,28 +334,31 @@ const ReportPage = () => {
         const recordsPerPage = 10;
         let numberOfPages = Math.ceil(allWorklogData.length / recordsPerPage);
         for (let pageNumber = 1; pageNumber <= numberOfPages; pageNumber++) {
-          const startRecord = (pageNumber - 1) * recordsPerPage;
-          let endRecord = startRecord + recordsPerPage;
-          if (pageNumber === numberOfPages) endRecord += 1; // Adjust endRecord if it's the last page
-          const worklogData = allWorklogData.slice(startRecord, endRecord);
-      
-          let workOrderPageNext = pdfDoc.addPage([PageSizes.Letter[1], PageSizes.Letter[0]]);
-      
-      
-      
-      
-      
-      
-          const pngSignatureImage = await pdfDoc.embedPng(signatureb64);
-          const pngInitialsImage = await pdfDoc.embedPng(initialsb64);
-          drawTable(workOrderPageNext, worklogData, pngSignatureImage, pngInitialsImage, signatureTitle, signatureName);
-          //pdfDoc.moveTo(startX,startY+200);
-          workOrderPageNext.drawText(`Site/School: ${siteName}  MR#: ${woNumber} Company Name: ANCOM SYSTEMS`, {
-            x: 50,
-            y: 10,
-            size: 16
-          });
-      
+            const startRecord = (pageNumber - 1) * recordsPerPage;
+            let endRecord = startRecord + recordsPerPage;
+            if (pageNumber === numberOfPages) endRecord += 1; // Adjust endRecord if it's the last page
+            const worklogData = allWorklogData.slice(startRecord, endRecord);
+
+            let workOrderPageNext = pdfDoc.addPage([PageSizes.Letter[1], PageSizes.Letter[0]]);
+
+
+
+
+
+
+            const pngSignatureImage = await pdfDoc.embedPng(signatureb64);
+            const pngInitialsImage = await pdfDoc.embedPng(initialsb64);
+            for(let record of worklogData){
+                record.signature = await pdfDoc.embedPng(record.signature);
+            };
+            drawTable(workOrderPageNext, worklogData, pngSignatureImage, pngInitialsImage, signatureTitle, signatureName);
+            //pdfDoc.moveTo(startX,startY+200);
+            workOrderPageNext.drawText(`Site/School: ${siteName}  MR#: ${woNumber} Company Name: ANCOM SYSTEMS`, {
+                x: 50,
+                y: 10,
+                size: 16
+            });
+
         }
         return await pdfDoc.save();
     }
@@ -372,7 +397,7 @@ const ReportPage = () => {
                         {tempoLogs.map((log, index) => (
                             <tr key={index}>
                                 {Object.values(log).map((value, i) => (
-                                    <td key={i}>{value}</td>
+                                    <td key={i}>{typeof value == "string" ? value: ''}</td>
                                 ))}
                             </tr>
                         ))}

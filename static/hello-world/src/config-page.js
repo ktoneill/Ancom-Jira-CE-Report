@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import SignatureCanvas from 'react-signature-canvas';
 import { invoke } from '@forge/bridge';
 
+
 const ConfigPage = () => {
     const [tempoKey, setTempoKey] = useState(null);
     const [tempoAuthData, setTempoAuthData] = useState(null);
@@ -48,9 +49,14 @@ const ConfigPage = () => {
         if (signpadRef.current){
             let base64_png_signature = signpadRef.current.getTrimmedCanvas().toDataURL('image/png');
             currentJiraUser.b64Signature = base64_png_signature;
-            invoke('setJiraUserSignatures', jiraUserSignatures).catch(setGlobalError);
-            setCurrentJiraUser(null);
-            signpadRef.current.clear();
+            console.debug('Jira User Signatures', jiraUserSignatures);
+            setJiraUserSignatures(jiraUserSignatures);
+            invoke('setJiraUserSignatures', jiraUserSignatures).catch(setGlobalError).finally(()=>{
+                signpadRef.current.clear();
+                setCurrentJiraUser(null);
+            });
+            
+            
         }
         else {
             setGlobalError("Signpad not defined");
@@ -93,7 +99,8 @@ const ConfigPage = () => {
     };
 
     return (
-        <div>Config Page!
+        <div><h2>Config Page!</h2>
+            
             <ul>
                 <li><h3>Tempo Auth Data</h3>
                 {tempoAuthData && (
@@ -127,7 +134,7 @@ const ConfigPage = () => {
                                 <ul>
                                     {jiraUserSignatures && jiraUserSignatures.map(item => (
                                         <li key={item.accountId}>
-                                            <label><a onClick={() => handleSetCurrentJiraUser(item)}> {item.displayName}</a><input name="signature" data-account-id={item.accountId} defaultValue={item.b64signature} type="text" /></label><br />
+                                            <label><a onClick={() => handleSetCurrentJiraUser(item)}> {item.displayName}</a><textarea name="signature" data-account-id={item.accountId} >{item.b64Signature}</textarea></label><br />
                                         </li>
                                     ))}
                                 </ul>

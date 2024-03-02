@@ -36,3 +36,6 @@ permissions:
       backend:
         - 'https://api.tempo.io'
         - 'https://*.atlassian.net'
+  content:
+    styles:
+      - 'unsafe-inline'
