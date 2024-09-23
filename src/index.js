@@ -11,6 +11,64 @@ async function getTempoKey() {
 
 const resolver = new Resolver();
 
+async function checkAndRenewOAuthToken() {
+  let tempoAuthData = await storage.getSecret('tempo-auth-data');
+  if (!tempoAuthData || !tempoAuthData.refresh_token || !tempoAuthData.expires_in || !tempoAuthData.timestamp) {
+    console.error("Incomplete auth data or refresh token not available.");
+    return null;
+  }
+
+  const currentTime = Math.floor(Date.now() / 1000); // Current time in seconds
+  const tokenExpiryTime = tempoAuthData.timestamp + tempoAuthData.expires_in;
+  if (currentTime < tokenExpiryTime) {
+    console.log("Token is still valid, no need to renew.");
+    return tempoAuthData; // Token is still valid, no need to renew
+  }
+
+  const urlBody = new URLSearchParams();
+
+  let grantType = tempoAuthData.refresh_token ? "refresh_token" : "authorization_code";
+  urlBody.append("grant_type", grantType);
+  urlBody.append("refresh_token", tempoAuthData.refresh_token);
+  urlBody.append("client_id", tempoAuthData.client_id);
+  urlBody.append("client_secret", tempoAuthData.client_secret);
+
+  try {
+    const response = await api.fetch("https://api.tempo.io/oauth/token/", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: urlBody.toString(),
+      redirect: 'follow'
+    });
+
+    if (!response.ok) {
+      console.error("Failed to renew OAuth token", response.statusText);
+      return null;
+    }
+
+    const tokenData = await response.json();
+    console.debug("Renewed OAuth Token Data", JSON.stringify(tokenData));
+
+    // Update stored auth data with new tokens and current timestamp
+    const updatedAuthData = { ...tempoAuthData, ...tokenData, timestamp: Math.floor(Date.now() / 1000) };
+    await storage.setSecret('tempo-auth-data', updatedAuthData);
+
+    // Optionally update the tempo-key if it's being used elsewhere
+    if (tokenData.access_token) {
+      await storage.setSecret('tempo-key', tokenData.access_token);
+    }
+
+    return updatedAuthData;
+  } catch (error) {
+    console.error("Error renewing OAuth token", error);
+    return null;
+  }
+}
+
+
+
+
+
 resolver.define('getText', (req) => {
   console.debug("getText: req", req);
   console.debug("getText: issueData", req.context.extension.issue);
@@ -67,29 +125,43 @@ resolver.define('setTempoAuthData', async ({ payload }) => {
 
 });
 
+
+resolver.define('renewTempoKey', async (req) => {
+  console.debug("renewTempoKey", req);
+  return await checkAndRenewOAuthToken();
+});
+
 resolver.define('getTempoKey', async (req) => {
   return await getTempoKey();
 });
 
-resolver.define('testTempoKey', async ({ payload }) => {
-  console.debug("testTempoKey", payload);
+resolver.define('testTempoKey', async ({payload}) => {
+  let token = payload;
+  console.debug("testTempoKey", token);
   var requestOptions = {
     method: 'GET',
-    headers: { "Authorization": `Bearer ${payload}` },
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json"},
     redirect: 'follow'
   };
 
   try {
-    let tempoTestResults = await api.fetch("https://api.tempo.io/4/globalconfiguration", requestOptions).then(r => r.json()).catch(e => console.error(e));
+    let response = await api.fetch("https://api.tempo.io/4/globalconfiguration", requestOptions);
+    if (response.status != 200) {
+      return new Error("Failed to get tempo configuration", repsonse.statusText);
+    }
+    let tempoTestResults = await response.json();
     //let k = "
 
     console.debug("tempoTestResults", tempoTestResults);
+    if (!tempoTestResults) throw "Failed to get tempo configuration";
     return tempoTestResults || 'Fail...';
   }
   catch (ee) {
     console.error("Failed to test results");
+    throw "Tempo test failed: " + ee;
     return ee;
   }
+
 });
 
 resolver.define('setTempoKey', async ({ payload }) => {
@@ -156,62 +228,88 @@ const fetchIssueData = async (issueIdOrKey) => {
       'Accept': 'application/json',
       'X-Atlassian-Token': 'no-check'
     }
-  }).then(res => res.json()).catch(e => console.error(e));
+  }).then(res => res.json()).catch(e => console.error("fetchIssueData",e));
 
 
   console.debug("fetchIssueData : got data");
   return issueData;
 };
 
+const fetchIssueWorklogs = async (issueIdOrKey) => {
+  console.debug("fetchIssueWorklogs", issueIdOrKey);
+  const fetchIssueWorklogs = await api.asApp().requestJira(route`./rest/api/3/issue/${issueIdOrKey}/worklog`, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+      'X-Atlassian-Token': 'no-check'
+    }
+  }).then(res => res.json()).catch(e => console.error("fetchIssueWorklogs",e));
 
+
+  console.debug("fetchIssueWorklogs : got data");
+  return fetchIssueWorklogs;
+};
 
 resolver.define('getFormattedWorklogs', async ({ payload, context }) => {
 
 
   try {
+    if (!(context && context.extension && context.extension.issue)) return Promise.resolve("{}");
+    var issueWorklogs = await fetchIssueWorklogs(context.extension.issue.key);
+    console.debug("issueWorklogs", JSON.stringify(issueWorklogs));
+    if (!issueWorklogs || !issueWorklogs.worklogs) {
+      console.error("getFormattedWorklogs:!issueWorklogs", "Failed to get issue worklogs");
+      return new Error("Failed to get issue worklogs");
+    }
+    var jiraWorklogIds = issueWorklogs && issueWorklogs.worklogs && issueWorklogs.worklogs.map(wl => wl.id);
+    
+    var tempoLogs = { results: [] };
     var tempoKey = await getTempoKey();
     if (!tempoKey) {
 
-      console.error({ message: "No key available for tempo!" });
+      console.error("getFormattedWorklogs:!tempoKey",{ message: "No key available for tempo!" });
+    }
+    else {
+      var jTtRequestOptions = {
+        method: 'POST',
+        headers: { "Authorization": `Bearer ${tempoKey}` },
+        body: JSON.stringify({ jiraWorklogIds }),
+        redirect: 'follow'
+      };
+      var errorMessage = null;
+      var jiraToTempoMapping = !!tempoKey && await api.fetch("https://api.tempo.io/4/worklogs/jira-to-tempo?limit=5000", jTtRequestOptions).then(r => r.json()).catch(e => { console.error("getFormattedWorklogs:jira-to-tempo",e); errorMessage = e; });
+      //let k = "QuVLrDU3Lc72pCyqlKYGso_vxLXIPtlx5ub7lCSJEK8-eu";
+  
+      var requestOptions = {
+        method: 'GET',
+        headers: { "Authorization": `Bearer ${tempoKey}` },
+        redirect: 'follow'
+      };
+  
+      if (!jiraToTempoMapping) {
+        console.error("getFormattedWorklogs","Failed to get jiraToTempoMapping");
+        jiraToTempoMapping = { results: [] };
+        //return null;
+        //return {message:"Failed to get jiraToTempoMapping: ",details: errorMessage};
+      }
+  
+  
+      var $tempoLogs = !!tempoKey && await api.fetch(`https://api.tempo.io/4/worklogs?issueId=${context.extension.issue.id}&limit=5000`, requestOptions).then(r => r.json()).catch(e => { console.error("fetch tempo logs by issueKey",e); errorMessage = e; });
+  
+      if (!$tempoLogs) {
+        console.error("getFormattedWorklogs:!tempoLogs", "Failed to get tempo logs");
+        tempoLogs = { results: [] };
+        //return null;
+        //return {message:"Failed to get Tempo logs: ",details: errorMessage};
+      }
+      else {
+        tempoLogs = $tempoLogs;
+      }
     }
     console.debug("getFormattedWorklogs", context.extension.issue);
-    if (!(context && context.extension && context.extension.issue)) return Promise.resolve("{}");
-    var issueData = await fetchIssueData(context.extension.issue.key).catch(e => console.error(e));
-    //console.debug("IssueData", JSON.stringify(issueData));
-    var jiraWorklogIds = issueData && issueData.fields.worklog.worklogs.map(wl => wl.id);
+    
 
-    var jTtRequestOptions = {
-      method: 'POST',
-      headers: { "Authorization": `Bearer ${tempoKey}` },
-      body: JSON.stringify({ jiraWorklogIds }),
-      redirect: 'follow'
-    };
-    var errorMessage = null;
-    var jiraToTempoMapping = await api.fetch("https://api.tempo.io/4/worklogs/jira-to-tempo", jTtRequestOptions).then(r => r.json()).catch(e => { console.error(e); errorMessage = e; });
-    //let k = "QuVLrDU3Lc72pCyqlKYGso_vxLXIPtlx5ub7lCSJEK8-eu";
-
-    var requestOptions = {
-      method: 'GET',
-      headers: { "Authorization": `Bearer ${tempoKey}` },
-      redirect: 'follow'
-    };
-
-    if (!jiraToTempoMapping) {
-      console.error("Failed to get jiraToTempoMapping");
-      jiraToTempoMapping = { results: [] };
-      //return null;
-      //return {message:"Failed to get jiraToTempoMapping: ",details: errorMessage};
-    }
-
-
-    var tempoLogs = await api.fetch(`https://api.tempo.io/4/worklogs?issueId=${context.extension.issue.id}`, requestOptions).then(r => r.json()).catch(e => { console.error(e); errorMessage = e; });
-
-    if (!tempoLogs) {
-      console.error("Failed to get tempo logs");
-      tempoLogs = { results: [] };
-      //return null;
-      //return {message:"Failed to get Tempo logs: ",details: errorMessage};
-    }
+    
 
 
     const jiraSignatures = await getJiraUserSignatures({ payload: null, context });
@@ -220,40 +318,43 @@ resolver.define('getFormattedWorklogs', async ({ payload, context }) => {
     async function resolveJiraAccount(accountId) {
       //todo: storage of accountId;
       //return 
+      let foundSignature = jiraSignatures.find(js => js.accountId == accountId);
+      if (!foundSignature) {
+        console.error("resolveJiraAccount", "No signature found for accountId", accountId);
+        var retrievedJiraUser = (await api.asApp().requestJira(route`/rest/api/2/user?accountId=${accountId}`).then(r => r.json()));
+        jiraSignatures.push({ accountId, displayName: retrievedJiraUser.displayName, b64Signature: null });
+        await storage.set('jira-user-signatures', jiraSignatures);
 
-      return jiraSignatures.find(js => js.accountId == accountId) || (await api.asApp().requestJira(route`/rest/api/2/user?accountId=${accountId}`).then(r => r.json()));
+        return { accountId, displayName: retrievedJiraUser.displayName, b64Signature: null };
+      }
+      return foundSignature;
     }
 
     tempoLogs = await Promise.all(tempoLogs.results.map(async (tempoLog) => {
-      console.debug("getting Jira Display Name", tempoLog.author.self);
+      //console.debug("getting Jira Display Name", tempoLog.author.self);
       try {
 
-        var headers = {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'X-Atlassian-Token': 'no-check'
-          }
-        }
         var authorResolved = await resolveJiraAccount(tempoLog.author.accountId);
         tempoLog.author.displayName = authorResolved.displayName;
         tempoLog.author.b64Signature = authorResolved.b64Signature;
-        console.debug("authorResolved", authorResolved);
+        //console.debug("authorResolved", authorResolved);
       }
       catch (ee) {
         tempoLog.author.displayName = "unknown from tempo";
         console.error("Error resolving displayName", ee);
       }
-      console.debug("got Jira Display Name", tempoLog.author.displayName);
+      //console.debug("got Jira Display Name", tempoLog.author.displayName);
       return tempoLog;
     }));
 
     console.debug("TEMPO Logs found", tempoLogs.length);
 
     function mapWorkLog(worklog) {
-      console.debug("worklog", worklog.id);
+      //console.debug("worklog", worklog.id);
       try {
-        var { tempoWorklogId } = jiraToTempoMapping.results.find(rm => rm.jiraWorklogId == worklog.id);
+        var result  = jiraToTempoMapping.results.find(rm => rm.jiraWorklogId == worklog.id);
+      
+        var tempoWorklogId = result && result.tempoWorklogId;
         var tempoLog = tempoWorklogId && tempoLogs.find(tempoWorklog => tempoWorklog.tempoWorklogId == tempoWorklogId);
         //console.debug("mapWorkLog found tempo log ? ", JSON.stringify(tempoLog || null));
         var started = new Date(worklog.started);
@@ -270,10 +371,14 @@ resolver.define('getFormattedWorklogs', async ({ payload, context }) => {
           to: ended.toLocaleString(),
           "time-out": ended.toTimeString().replace(/(\d\d:\d\d):\d\d.*/, "$1"),
           summary: tempoLog ? tempoLog.description : summary,
-        };
+          timeSpentSeconds: parseFloat(worklog.timeSpentSeconds),
+        }; //
       }
       catch (e) {
         console.error("mapworklog", e);
+        var started = new Date(worklog.started);
+        var ended = new Date(worklog.started);
+        ended.setSeconds(worklog.timeSpentSeconds);
         return {
           who: worklog.author.displayName,
           worker: worklog.author.displayName,
@@ -284,16 +389,17 @@ resolver.define('getFormattedWorklogs', async ({ payload, context }) => {
           to: ended.toLocaleString(),
           "time-out": ended.toTimeString().replace(/(\d\d:\d\d):\d\d.*/, "$1"),
           summary: `${summary}`,
+          timeSpentSeconds: parseFloat(worklog.timeSpentSeconds),
           error: e
         };
       }
     }
-    var resolvedWorklogs = issueData && issueData.fields.worklog.worklogs.map(mapWorkLog);
+    var resolvedWorklogs = issueWorklogs && issueWorklogs.worklogs.map(mapWorkLog);
     //console.debug("resolvedWorklogs",resolvedWorklogs);
-    return JSON.stringify(resolvedWorklogs);
+    return {worklogs:resolvedWorklogs, timeSpentSeconds: resolvedWorklogs.reduce((acc, wl) => acc + wl.timeSpentSeconds, 0)};
   }
   catch (e) {
-    console.error(e);
+    throw e;
     return [];
   }
 });

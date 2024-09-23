@@ -4,7 +4,7 @@ modules:
       resource: main
       resolver:
         function: resolver
-      viewportSize: large
+      viewportSize: xlarge
       title: Ancom Jira CE Report
   jira:adminPage:
     - key: ancom-jira-ce-report-admin-page
@@ -27,6 +27,7 @@ permissions:
     - 'write:jira-work'
     - 'storage:app'
     - read:issue-details:jira
+    - read:issue-worklog:jira
     - read:application-role:jira
     - read:group:jira
     - read:user:jira

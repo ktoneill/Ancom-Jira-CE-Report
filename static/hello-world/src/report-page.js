@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect,useRef } from 'react';
 import { invoke, view, requestJira } from '@forge/bridge';
 import SignatureCanvas from 'react-signature-canvas';
 import { PDFDocument, rgb, PageSizes } from 'pdf-lib';
@@ -6,14 +6,54 @@ import FormData from 'form-data';
 const ReportPage = () => {
 
     const [issueKey, setIssueKey] = useState(null);
+    const [issueData, setIssueData] = useState(null); //issueData.fields.attachment[0].id
     const [tempoLogs, setTempoLogs] = useState(null);
+    const [signatureData, setSignatureData] = useState(null);
+    const [existingSignature, setExistingSignature] = useState(null);
+    const [signPad, setSignPad] = useState(null);
+    const [initialsSignPad, setInitialsSignPad] = useState(null);
     const [isButtonDisabled, setButtonDisabled] = useState(false);
     const [context, setContext] = useState(null);
     const [isDetectingContext, setDetectingContext] = useState(true);
-    const [globalError, setGlobalError] = useState(null);
+    const [globalError, setGlobalError] = useState([]);
+    const [isTempoKeyValid, setTempoKeyValid] = useState(null);
 
-    let signpad = {};
-    let initialsSignPad = {};
+
+
+    const displayError = (...args) => {
+        const error = args.join(', ');
+        setGlobalError(prevErrors => [...prevErrors, error]);
+        console.error(...args);
+    };
+
+    useEffect(() => {
+        if (issueKey) {
+            requestJira(`/rest/api/3/issue/${issueKey}`).then(response => {
+
+
+                console.debug(`Response-forge-jira-issu/e-panel: ${response.status} ${response.statusText}`);
+                return response.json();
+            }).then(setIssueData)
+        }
+    }, [issueKey]);
+
+    useEffect(async () => {
+        if (issueData) {
+            setExistingSignature(getSignaturesInIssueData(issueData))
+            getStoredSignatureAndInitials(issueData).then(setSignatureData).catch(e => displayError("Error loading signature and initials", e));
+            
+        }
+        
+    }, [issueData]);
+
+    useEffect(() => {
+        if (signatureData && signPad) {
+            signPad.fromDataURL(signatureData.signature);
+        }
+        if (signatureData && initialsSignPad) {
+            initialsSignPad.fromDataURL(signatureData.initials);
+        }
+    }, [signatureData,signPad,initialsSignPad]);
 
     useEffect(() => {
         setDetectingContext(true);
@@ -23,22 +63,29 @@ const ReportPage = () => {
         view.getContext()
             .then(setContext)
             .finally(() => setDetectingContext(false));
-    });
+        //});
 
-    useEffect(() => {
+        //useEffect(() => {
+        //invoke('testTempoKey', { "hello": "world" }).then(r=>r.json()).then(setTempoKeyValid).catch(e => { displayError("Error testing tempo key", e);  });
+
+
 
         invoke('getIssueKey', { "hello": "world" })
             .then(setIssueKey).then(() => {
-                invoke('getFormattedWorklogs').then(r => {
-                    try {
-                        return !!r && JSON.parse(r) || [];
-                    }
-                    catch (efo) {
-                        return [];
-                    }
-                }).then(setTempoLogs).catch(e => console.error("Error loading tempo logs", e));
-            }).catch(e => console.error("Error getting issue key", e));
+                invoke('getFormattedWorklogs').then(setTempoLogs).catch(e => displayError("Error loading tempo logs", e));
+            }).catch(e => {
+                displayError("Error setting issue Key", e);
+            });
     }, []);
+
+    const getSignaturesInIssueData = (issueData) => {
+        if (issueData && issueData.fields && issueData.fields.attachment) {
+            let signatureAttachmentId = issueData.fields.attachment.find(a => a.filename == "signature.png");
+            let initialsAttachmentId = issueData.fields.attachment.find(a => a.filename == "initials.png");
+            return {signature: signatureAttachmentId, initials: initialsAttachmentId};
+        }
+        return {signature: null, initials: null};
+    };
 
     function drawTable(page, worklogData, pngSignatureImage, pngInitialsImage, signerTitle, signerPrint) {
         signerTitle = signerTitle || "_____________________";
@@ -104,8 +151,8 @@ const ReportPage = () => {
                 if (cellIndex == 3 && rowIndex != 0) {
                     try {
                         //console.log("Drawing signature", worklogData[rowIndex-1].signature);
-                        if (worklogData[rowIndex-1] && worklogData[rowIndex-1].signature) {
-                            page.drawImage(worklogData[rowIndex-1].signature, {
+                        if (worklogData[rowIndex - 1] && worklogData[rowIndex - 1].signature) {
+                            page.drawImage(worklogData[rowIndex - 1].signature, {
                                 x: offsetX,
                                 y: startY - cellHeightI,
                                 width: columnWidths[cellIndex],
@@ -120,23 +167,34 @@ const ReportPage = () => {
 
                 if (cellIndex == row.length - 1 && rowIndex != 0) {
 
-                    
+
 
 
                     const pngDims = pngSignatureImage.scale(.5);
-                    page.drawImage(pngSignatureImage, {
-                        x: offsetX + 80,
-                        y: startY - (2 * (cellHeightI * .5)),
-                        width: 80,
-                        height: 35,
-                    });
+                    try {
+                        page.drawImage(pngSignatureImage, {
+                            x: offsetX + 80,
+                            y: startY - (2 * (cellHeightI * .5)),
+                            width: 80,
+                            height: 35,
+                        });
+                    }
+                    catch (e) {
+                        displayError("failed to draw signature", e);
+                    }
+                    try {
+                        page.drawImage(pngInitialsImage, {
+                            x: offsetX - 40,
+                            y: startY - (2 * (cellHeightI * .5)),
+                            width: 40,
+                            height: 20,
+                        });
+                    }
+                    catch (e) {
 
-                    page.drawImage(pngInitialsImage, {
-                        x: offsetX - 40,
-                        y: startY - (2 * (cellHeightI * .5)),
-                        width: 40,
-                        height: 20,
-                    });
+                        displayError("failed to draw initials", e);
+
+                    }
 
                 }
 
@@ -149,6 +207,46 @@ const ReportPage = () => {
 
 
     }
+
+    const getAttachmentAsBase64 = async function (attachmentId) {
+        const response = await requestJira(`/rest/api/3/attachment/content/${attachmentId}`, {
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+
+        let base64;
+        if (response.headers.get('Content-Type').includes('text')) {
+            const textData = await response.text();
+            base64 = btoa(textData);
+        } else {
+            const blobData = await response.blob();
+            base64 = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64data = reader.result.split(',')[1];
+                    resolve(base64data);
+                };
+                reader.readAsDataURL(blobData);
+            });
+        }
+        return `data:image/png;base64,${base64}`;
+    };
+
+
+    const getStoredSignatureAndInitials = async function (issueData) {
+        var { signatureAttachmentId, initialsAttachmentId } = getSignaturesInIssueData(issueData);
+        var signature = null;
+        var initials = null;
+        if (signatureAttachmentId) {
+            signature = await getAttachmentAsBase64(signatureAttachmentId.id);
+        }
+        if (initialsAttachmentId) {
+            initials = await getAttachmentAsBase64(initialsAttachmentId.id);
+        }
+        return { signature, initials };
+        
+    };
 
     const getWorkorderScanAttachmentAsBuffer = async function (issueData) {
         console.log("getWorkorderScanAttachmentAsBuffer", JSON.stringify(issueData));
@@ -169,61 +267,112 @@ const ReportPage = () => {
         return arrayBuffer;
     }
 
-    const handleSubmission = (issueKey, signatureb64, initialsb64, signaturetitle, signaturename, tempoLogs) => {
+    const handleSubmission = async (issueKey, signatureb64, initialsb64, signaturetitle, signaturename, tempoLogs) => {
         console.log("handleSubmission", issueKey);
-        const formData = new FormData();
-        requestJira(`/rest/api/3/issue/${issueKey}`
-        ).then(response => {
 
 
-            console.debug(`Response-forge-jira-issu/e-panel: ${response.status} ${response.statusText}`);
-            return response.json();
-        }).catch((error) => {
-            console.error('Response-forge-jira-issue-panel-Error:', error);
-        }).then(async (issueData) => {
 
-            let pdfScan = await getWorkorderScanAttachmentAsBuffer(issueData);
-            console.debug("handleSubmission:getWorkorderScanAttachmentAsBuffer:pdfScan");
+        let pdfScan = await getWorkorderScanAttachmentAsBuffer(issueData);
+        console.debug("handleSubmission:getWorkorderScanAttachmentAsBuffer:pdfScan");
 
 
-            if (!tempoLogs) {
-                throw "No Tempo logs";
+        if (!tempoLogs) {
+            throw "No Tempo logs";
+        }
+        let adjustedPDF = await addWorklogTableToPdf(pdfScan, tempoLogs.worklogs, signatureb64, initialsb64, signaturetitle, signaturename, issueData.fields.customfield_10058, issueData.fields.customfield_10038);
+        console.debug("handledSubmission:addWorklogTableToPdf:adjustedPDF");
+
+
+        const pdfFormData = new FormData();
+
+        let savedPDF = new Blob([adjustedPDF], { type: 'application/pdf' });
+        pdfFormData.append('file', savedPDF, `Report-${issueData.fields.customfield_10038}.pdf`);
+        //let signatureBlob = new Blob([signatureb64], { type: 'image/png' });
+        //formData.append('filesignature', signatureBlob, 'initials.png');
+        //let initialsBlob = new Blob([initialsb64], { type: 'image/png' });
+        //formData.append('fileinitials', initialsBlob, 'initials.png');
+        //formData.append('fileName',"cereport.pdf");
+        requestJira(`/rest/api/2/issue/${issueKey}/attachments`, {
+            method: 'POST',
+            body: pdfFormData,
+            headers: {
+                'Accept': 'application/json',
+                'X-Atlassian-Token': 'no-check'
             }
-            let adjustedPDF = await addWorklogTableToPdf(pdfScan, tempoLogs, signatureb64, initialsb64, signaturetitle, signaturename, issueData.fields.customfield_10058, issueData.fields.customfield_10038);
-            console.debug("handledSubmission:addWorklogTableToPdf:adjustedPDF");
+        }).then(response => {
+            console.debug(`Response-attachment: ${response.status} ${response.statusText}`);
+            view.close();
+        }).catch((error) => {
+            alert('Failed to save:\r\n' + error)
+            displayError('Response-attachment:', error);
+        });
 
-            let savedPDF = new Blob([adjustedPDF], { type: 'application/pdf' });
-            formData.append('file', savedPDF, `Report-${issueData.fields.customfield_10038}.pdf`);
-            //formData.append('fileName',"cereport.pdf");
-            requestJira(`/rest/api/2/issue/${issueKey}/attachments`, {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'Accept': 'application/json',
-                    'X-Atlassian-Token': 'no-check'
-                }
-            }).then(response => {
-                console.debug(`Response-attachment: ${response.status} ${response.statusText}`);
-                view.close();
-            }).catch((error) => {
-                alert('Failed to save:\r\n' + error)
-                console.error('Response-attachment:', error);
-            });
-        })
+        const initialsFormData = new FormData();
+        const initialsbyteCharacters = atob(initialsb64.split(',')[1]);
+        const initialsbyteNumbers = new Array(initialsbyteCharacters.length);
+        for (let i = 0; i < initialsbyteCharacters.length; i++) {
+            initialsbyteNumbers[i] = initialsbyteCharacters.charCodeAt(i);
+        }
+        const initialsbyteArray = new Uint8Array(initialsbyteNumbers);
+        let initialsBlob = new Blob([initialsbyteArray], { type: 'image/png' });
+        initialsFormData.append('file', initialsBlob, 'initials.png');
+        requestJira(`/rest/api/2/issue/${issueKey}/attachments`, {
+            method: 'POST',
+            body: initialsFormData,
+            headers: {
+                'Accept': 'application/json',
+                'X-Atlassian-Token': 'no-check'
+            }
+        }).then(response => {
+            console.debug(`Response-attachment: ${response.status} ${response.statusText}`);
+            view.close();
+        }).catch((error) => {
+            alert('Failed to save:\r\n' + error)
+            displayError('Response-attachment:', error);
+        });
+
+
+        const signatureFormData = new FormData();
+        const byteCharacters = atob(signatureb64.split(',')[1]);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        let signatureBlob = new Blob([byteArray], { type: 'image/png' });
+        signatureFormData.append('file', signatureBlob, 'signature.png');
+        //let initialsBlob = new Blob([initialsb64], { type: 'image/png' });
+        //formData.append('fileinitials', initialsBlob, 'initials.png');
+        //formData.append('fileName',"cereport.pdf");
+        requestJira(`/rest/api/2/issue/${issueKey}/attachments`, {
+            method: 'POST',
+            body: signatureFormData,
+            headers: {
+                'Accept': 'application/json',
+                'X-Atlassian-Token': 'no-check'
+            }
+        }).then(response => {
+            console.debug(`Response-attachment: ${response.status} ${response.statusText}`);
+            view.close();
+        }).catch((error) => {
+            alert('Failed to save:\r\n' + error)
+            displayError('Response-attachment:', error);
+        });
+
 
 
 
     };
 
     const clearSignature = () => {
-        signpad.clear();
+        signPad.clear();
         initialsSignPad.clear();
     };
 
     const getSignature = async () => {
         setButtonDisabled(true);
         console.log("getSignature:DATA", JSON.stringify(issueKey, null, 2));
-        let base64_png_signature = signpad.getTrimmedCanvas().toDataURL('image/png');
+        let base64_png_signature = signPad.getTrimmedCanvas().toDataURL('image/png');
         let base64_png_initials = initialsSignPad.getTrimmedCanvas().toDataURL('image/png');
 
 
@@ -236,7 +385,7 @@ const ReportPage = () => {
     async function addWorklogTableToPdf(pdfBytes, allWorklogData, signatureb64, initialsb64, signatureTitle, signatureName, siteName, woNumber) {
         console.log("addWorklogTableToPdf:loading bytes of pdf");
         const pdfDoc = await PDFDocument.load(pdfBytes);
-        
+
         async function addSignatureLine(page) {
             let signatureLineData = {
                 x: 20,
@@ -262,7 +411,7 @@ const ReportPage = () => {
                 height: 40,
             });
         }
-        
+
         var workOrderPage = pdfDoc.getPage(0);
 
         const halfWhiteBox = {
@@ -279,7 +428,7 @@ const ReportPage = () => {
 
 
         var reportLines = allWorklogData.map(record => { return [record.date, record.who, record['time-in'], record['time-out'], record.summary].join('\t'); }).reduce(function (p, workorderText) {
-            workorderText.replace(/[\r\n]/g, "").match(/[\S\s]{1,100}(?:[\s\.])/ig).forEach((line, lineI) => {
+            workorderText.replace(/[\r\n]/g, "").match(/[\S\s]{1,90}(?:[\s\.])/ig).forEach((line, lineI) => {
                 p.push(`${lineI != 0 ? '\t' : ''}${line}`);
 
             });
@@ -348,8 +497,13 @@ const ReportPage = () => {
 
             const pngSignatureImage = await pdfDoc.embedPng(signatureb64);
             const pngInitialsImage = await pdfDoc.embedPng(initialsb64);
-            for(let record of worklogData){
-                record.signature = await pdfDoc.embedPng(record.signature);
+            for (let record of worklogData) {
+                try {
+                    record.signature = await pdfDoc.embedPng(record.signature);
+                }
+                catch (ee) {
+                    displayError("Error embedding signature", ee, record);
+                }
             };
             drawTable(workOrderPageNext, worklogData, pngSignatureImage, pngInitialsImage, signatureTitle, signatureName);
             //pdfDoc.moveTo(startX,startY+200);
@@ -368,46 +522,91 @@ const ReportPage = () => {
 
 
     return (
-        <div>
+        <div style={{ padding: "2em" }}>
             <button onClick={() => view.close()}>Close</button>
-            <h1>CE REPORT SIGNATURE:{issueKey ? issueKey : 'Loading'}</h1>
-            <label>Name <input id="signaturename" name='signaturename' /></label><br />
-            <label>Title <input id="signaturetitle" name='signaturetitle' /></label><br />
-            <div>
-                <div style={{ borderColor: "black", borderStyle: "solid", borderWidth: "2px;", backgroundColor: "white", padding: "2em" }}>
-                    <SignatureCanvas penColor='black' canvasProps={{ width: 600, height: 200, className: 'sigCanvas', style: { borderColor: "red", borderWidth: "3px", borderStyle: "solid" } }} ref={(ref) => { signpad = ref; }} />
+            <h1>CE REPORT SIGNATURE: {issueData ? issueData.fields.customfield_10038 : 'Loading'}</h1>
+            <div style={{ marginTop: '2em', padding: '1em', border: '1px solid #ccc', borderRadius: '8px', backgroundColor: '#f0f0f0', boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
+                <div>
+                    <p><strong>Total Hours:</strong> {tempoLogs ? parseFloat(tempoLogs.timeSpentSeconds) / 3600 : 'Loading...'} hours</p>
                 </div>
-                <div style={{ borderColor: "black", borderStyle: "solid", borderWidth: "2px;", backgroundColor: "white", padding: "2em" }}>
+                
+            </div>
+            {globalError && Array.isArray(globalError) && globalError.length != 0 &&
+                <div>
+                    <h3 style={{ color: "red" }}>Errors</h3>
+                    <ul>
+                        {globalError.map((error, index) => (
+                            <li key={index}>{error}</li>
+                        ))}
 
-                    <SignatureCanvas penColor='black' canvasProps={{ width: 200, height: 200, className: 'sigCanvas', style: { borderColor: "red", borderWidth: "3px", borderStyle: "solid" } }} ref={(ref) => { initialsSignPad = ref; }} />
+                    </ul>
+                </div>
+            }
+            
+            <div style={{ display: 'flex', flexDirection: 'column', padding: '1em', border: '1px solid #ccc', borderRadius: '8px', backgroundColor: '#f0f0f0', boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
+                <table style={{ width: '100%', marginBottom: '1em' }}>
+                    <tbody>
+                        <tr>
+                            <td style={{ fontWeight: 'bold', padding: '0.5em', width: '16.66%' }}>Name:</td>
+                            <td style={{ padding: '0.5em' }}>
+                                <input id="signaturename" name='signaturename' style={{ width: '100%', border: '1px solid #ccc', borderRadius: '4px', padding: '0.5em' }} />
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style={{ fontWeight: 'bold', padding: '0.5em' }}>Title:</td>
+                            <td style={{ padding: '0.5em' }}>
+                                <input id="signaturetitle" name='signaturetitle' style={{ width: '100%', border: '1px solid #ccc', borderRadius: '4px', padding: '0.5em' }} />
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style={{ fontWeight: 'bold', padding: '0.5em' }}>Signature:</td>
+                            <td style={{ padding: '0.5em' }}>
+                                <div style={{ width: '100%', border: '1px solid #ccc', padding: '0.5em', backgroundColor: 'white', borderRadius: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                    <SignatureCanvas penColor='black' canvasProps={{ width: 500, height: 150, className: 'sigCanvas', style: { border: '2px solid #ccc', borderRadius: '4px' } }} ref={setSignPad} />
+                                </div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style={{ fontWeight: 'bold', padding: '0.5em' }}>Initials:</td>
+                            <td style={{ padding: '0.5em' }}>
+                                <div style={{ width: '100%', border: '1px solid #ccc', padding: '0.5em', backgroundColor: 'white', borderRadius: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                    <SignatureCanvas penColor='black' canvasProps={{ width: 150, height: 150, className: 'sigCanvas', style: { border: '2px solid #ccc', borderRadius: '4px' } }} ref={setInitialsSignPad} />
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <button onClick={clearSignature} style={{ marginRight: '1em', padding: '0.5em 1em', border: 'none', borderRadius: '4px', backgroundColor: '#007bff', color: 'white', cursor: 'pointer' }}>Clear</button>
+                    <button disabled={isButtonDisabled} onClick={getSignature} style={{ padding: '0.5em 1em', border: 'none', borderRadius: '4px', backgroundColor: isButtonDisabled ? '#ccc' : '#28a745', color: 'white', cursor: isButtonDisabled ? 'not-allowed' : 'pointer' }}>Save and Create Signed PDF</button>
                 </div>
             </div>
-            <button onClick={clearSignature}>Clear</button>
-            <button disabled={isButtonDisabled} onClick={getSignature}>Save and Create Signed PDF</button>
-            {tempoLogs && Array.isArray(tempoLogs) && tempoLogs[0] ? (
+           
+            {tempoLogs && tempoLogs.worklogs && Array.isArray(tempoLogs.worklogs) && tempoLogs.worklogs[0] ? (
                 <table>
                     <thead>
                         <tr>
-                            {Object.keys(tempoLogs[0]).map((key) => (
+                            {["who", "worker", "date", "time-in", "time-out", "summary"].map((key) => (
                                 <th key={key}>{key}</th>
                             ))}
                         </tr>
                     </thead>
                     <tbody>
-                        {tempoLogs.map((log, index) => (
+                        {tempoLogs.worklogs.map((log, index) => (
                             <tr key={index}>
-                                {Object.values(log).map((value, i) => (
-                                    <td key={i}>{typeof value == "string" ? value: ''}</td>
+                                {Object.entries(log).filter(([k, v]) => ["who", "worker", "date", "time-in","time-out", "summary"].indexOf(k) != -1).map(([key, value], i) => (
+                                    <td key={i}>{typeof value == "string" ? value : ''}</td>
                                 ))}
                             </tr>
                         ))}
                     </tbody>
                 </table>
-            ) : 'Loading Tempo Logs'}
+            ) : tempoLogs && tempoLogs.worklogs && Array.isArray(tempoLogs.worklogs) ? 'No Logs retrieved' : 'Loading Tempo Logs'}
         </div>
     );
 };
 
 
 export default ReportPage;
+
 

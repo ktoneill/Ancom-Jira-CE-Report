@@ -41,7 +41,15 @@ const ConfigPage = () => {
         invoke("testTempoKey", document.getElementById('tempo-key-input').value).then(td => {
             console.debug("test results", td);
             setTempoKeyTestResults(td);
-        }).catch(e => console.error(e));
+        }).catch(e => setTempoKeyTestResults("Tempo Test failed",e.message));
+    };
+
+    const renewTempoKey = () => {
+        console.log("renewTempoKey")
+        invoke("renewTempoKey", document.getElementById('tempo-key-input').value).then(td => {
+            console.debug("renew results", td);
+            setTempoKeyTestResults(td);
+        }).catch(e => setTempoKeyTestResults("Failed to renew",e.message));
     };
 
 
@@ -155,6 +163,7 @@ const ConfigPage = () => {
                     <label>Tempo Key: {tempoKey ? tempoKey : 'No Key Yet'} <input id="tempo-key-input" defaultValue={tempoKey} type="text" /></label><br />
                     <button onClick={storeTempoKey}>Save</button>
                     <button onClick={testTempoKey}>Test</button>
+                    <button onClick={renewTempoKey}>Renew</button>
 
                     <pre>{tempoKeyTestResults ? JSON.stringify(tempoKeyTestResults, null, '\t') : 'Not tested'}</pre>
                 </li>
