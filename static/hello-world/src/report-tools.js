@@ -163,7 +163,7 @@ const createCEreport = async function createCEreport(issueIdOrKey) {
     var started = new Date(worklog.started);
     var ended = new Date(worklog.started);
     ended.setSeconds(worklog.timeSpentSeconds);
-    var summary = worklog.comment && worklog.comment.content && worklog.comment.content[0] && worklog.comment.content[0].content[0] && worklog.comment.content[0].content[0].text || worklog.comment;
+    var summary = (worklog.comment && worklog.comment.content && worklog.comment.content[0] && worklog.comment.content[0].content[0] && worklog.comment.content[0].content[0].text) || worklog.comment;
     return {
       who: worklog.author.displayName,
       worker: worklog.author.displayName,

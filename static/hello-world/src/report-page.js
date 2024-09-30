@@ -3,6 +3,30 @@ import { invoke, view, requestJira } from '@forge/bridge';
 import SignatureCanvas from 'react-signature-canvas';
 import { PDFDocument, rgb, PageSizes } from 'pdf-lib';
 import FormData from 'form-data';
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.log('Error caught by boundary:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <h1>Something went wrong.</h1>;
+    }
+
+    return this.props.children; 
+  }
+}
+
 const ReportPage = () => {
 
     const [issueKey, setIssueKey] = useState(null);
@@ -15,7 +39,7 @@ const ReportPage = () => {
     const [isButtonDisabled, setButtonDisabled] = useState(false);
     const [context, setContext] = useState(null);
     const [isDetectingContext, setDetectingContext] = useState(true);
-    const [globalError, setGlobalError] = useState([]);
+    const [globalError, setGlobalError] = useState(["First Error"]);
     const [isTempoKeyValid, setTempoKeyValid] = useState(null);
 
 
@@ -26,24 +50,47 @@ const ReportPage = () => {
         console.error(...args);
     };
 
+    
+        
+    
+
     useEffect(() => {
         if (issueKey) {
             requestJira(`/rest/api/3/issue/${issueKey}`).then(response => {
-
-
                 console.debug(`Response-forge-jira-issu/e-panel: ${response.status} ${response.statusText}`);
                 return response.json();
-            }).then(setIssueData)
+            }).then(setIssueData);
+            
+            invoke('getFormattedWorklogs',{}).then(fwl=>{
+                if (fwl && fwl.worklogs && fwl.worklogs.length > 0) {
+                setTempoLogs(fwl);
+                }
+                else {
+                    displayError("No worklogs retrieved", fwl.message);
+                }
+            }).catch(e => {
+                displayError("Error loading tempo logs", e)
+            });
+
+            /**/
         }
     }, [issueKey]);
 
-    useEffect(async () => {
-        if (issueData) {
-            setExistingSignature(getSignaturesInIssueData(issueData))
-            getStoredSignatureAndInitials(issueData).then(setSignatureData).catch(e => displayError("Error loading signature and initials", e));
-            
-        }
-        
+    useEffect(() => {
+        const fetchData = async () => {
+            if (issueData) {
+                try {
+                    const signatures = getSignaturesInIssueData(issueData);
+                    setExistingSignature(signatures);
+                    const storedSignatures = await getStoredSignatureAndInitials(issueData);
+                    setSignatureData(storedSignatures);
+                } catch (e) {
+                    displayError("Error loading signature and initials", e);
+                }
+            }
+        };
+
+        fetchData();
     }, [issueData]);
 
     useEffect(() => {
@@ -54,6 +101,11 @@ const ReportPage = () => {
             initialsSignPad.fromDataURL(signatureData.initials);
         }
     }, [signatureData,signPad,initialsSignPad]);
+
+
+    useEffect(() => {  
+        context && context.extension && context.extension.issue && setIssueKey(context.extension.issue.key);
+    }, [context]);
 
     useEffect(() => {
         setDetectingContext(true);
@@ -68,18 +120,10 @@ const ReportPage = () => {
         //useEffect(() => {
         //invoke('testTempoKey', { "hello": "world" }).then(r=>r.json()).then(setTempoKeyValid).catch(e => { displayError("Error testing tempo key", e);  });
 
-
-
-        invoke('getIssueKey', { "hello": "world" })
-            .then(setIssueKey).then(() => {
-                invoke('getFormattedWorklogs').then(setTempoLogs).catch(e => displayError("Error loading tempo logs", e));
-            }).catch(e => {
-                displayError("Error setting issue Key", e);
-            });
     }, []);
 
     const getSignaturesInIssueData = (issueData) => {
-        if (issueData && issueData.fields && issueData.fields.attachment) {
+        if (issueData && issueData.fields && Array.isArray(issueData.fields.attachment)) {
             let signatureAttachmentId = issueData.fields.attachment.find(a => a.filename == "signature.png");
             let initialsAttachmentId = issueData.fields.attachment.find(a => a.filename == "initials.png");
             return {signature: signatureAttachmentId, initials: initialsAttachmentId};
@@ -250,8 +294,8 @@ const ReportPage = () => {
 
     const getWorkorderScanAttachmentAsBuffer = async function (issueData) {
         console.log("getWorkorderScanAttachmentAsBuffer", JSON.stringify(issueData));
-        var attachement0 = issueData && issueData.fields && issueData.fields.attachment[0];
-        var id = attachement0 && issueData.fields.attachment[0].id;
+        var attachement0 = issueData?.fields?.attachment?.[0];
+        var id = attachement0?.id;
         console.debug("getWorkorderScanAttachment: id", id);
         const response = await requestJira(`/rest/api/3/attachment/content/${id}`, {
             headers: {
@@ -268,16 +312,17 @@ const ReportPage = () => {
     }
 
     const handleSubmission = async (issueKey, signatureb64, initialsb64, signaturetitle, signaturename, tempoLogs) => {
+        if (!issueData) {
+            throw new Error("Issue data is not available");
+        }
+
         console.log("handleSubmission", issueKey);
-
-
 
         let pdfScan = await getWorkorderScanAttachmentAsBuffer(issueData);
         console.debug("handleSubmission:getWorkorderScanAttachmentAsBuffer:pdfScan");
 
-
         if (!tempoLogs) {
-            throw "No Tempo logs";
+            throw new Error("No Tempo logs");
         }
         let adjustedPDF = await addWorklogTableToPdf(pdfScan, tempoLogs.worklogs, signatureb64, initialsb64, signaturetitle, signaturename, issueData.fields.customfield_10058, issueData.fields.customfield_10038);
         console.debug("handledSubmission:addWorklogTableToPdf:adjustedPDF");
@@ -427,13 +472,21 @@ const ReportPage = () => {
         const fullWhiteBox = { ...halfWhiteBox, height: Math.floor(workOrderPage.getHeight()) - 20 };
 
 
-        var reportLines = allWorklogData.map(record => { return [record.date, record.who, record['time-in'], record['time-out'], record.summary].join('\t'); }).reduce(function (p, workorderText) {
-            workorderText.replace(/[\r\n]/g, "").match(/[\S\s]{1,90}(?:[\s\.])/ig).forEach((line, lineI) => {
+        // This section processes the worklog data into a format suitable for PDF rendering
+        var reportLines = allWorklogData.map(record => {
+            // For each worklog record, create a tab-separated string of key information
+            return [record.date, record.who, record['time-in'], record['time-out'], record.summary].join('\t');
+        }).reduce(function (p, workorderText) {
+            // For each workorder text:
+            // 1. Remove any carriage returns or newlines
+            // 2. Split the text into chunks of up to 90 characters, respecting word boundaries
+            // 3. Add each chunk as a new line, with subsequent chunks indented
+            workorderText.replace(/[\r\n]/g, "").match(/[\S\s]{1,90}(?:[\s\.]*)/ig).forEach((line, lineI) => {
                 p.push(`${lineI != 0 ? '\t' : ''}${line}`);
-
             });
             return p;
         }, []);
+        // The result is an array of strings, each representing a line in the report
 
         const linesPerPage = 55;
         var currentLine = 0;
@@ -606,7 +659,13 @@ const ReportPage = () => {
     );
 };
 
+// Wrap your main component with this error boundary
+const App = () => (
+  <ErrorBoundary>
+    <ReportPage />
+  </ErrorBoundary>
+);
 
-export default ReportPage;
+export default App;
 
 

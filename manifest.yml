@@ -3,24 +3,28 @@ modules:
     - key: ancom-jira-ce-report-issue-action
       resource: main
       resolver:
-        function: resolver
+        function: ancomreportresolver
       viewportSize: xlarge
       title: Ancom Jira CE Report
   jira:adminPage:
     - key: ancom-jira-ce-report-admin-page
       resource: main
       resolver:
-        function: resolver
+        function: ancomreportresolver
       title: Ancom Jira CE Report
       useAsConfig: true
   function:
-    - key: resolver
+    - key: ancomreportresolver
       handler: index.handler
 resources:
   - key: main
     path: static/hello-world/build
 app:
   id: ari:cloud:ecosystem::app/922ff542-07f0-4bbd-9367-88f261fbc068
+  licensing:
+    enabled: true
+  runtime:
+    name: nodejs18.x
 permissions:
   scopes:
     - 'read:jira-work'

@@ -2,28 +2,35 @@ import React, { useEffect, useState } from 'react';
 import { view } from '@forge/bridge';
 import ConfigPage from './config-page';
 import ReportPage from './report-page';
+import Button from '@atlaskit/button';
 
 function App() {
   const [context, setContext] = useState(null);
 
+  const fetchContext = () => {
+    view.getContext().then(setContext);
+  };
+
   useEffect(() => {
-    // Use the "view" from Forge Bridge to get the context
-    // where this React app is running
-    view.getContext()
-      .then(setContext);
+    fetchContext();
   }, []);
 
-  switch (context && context.moduleKey) {
-    case 'ancom-jira-ce-report-admin-page':
-      // Render "ConfigPage" if we are in module "admin-page"
-      return <ConfigPage/>;
-    case 'ancom-jira-ce-report-issue-action':
-      // Render "ReportPage" if we are in module "issue-panel"
-      return <ReportPage />;
-    default:
-      // Render a default or error state if context is not recognized
-      return <div>Unknown context</div>;
-  }
+  const renderContent = () => {
+    switch (context && context.moduleKey) {
+      case 'ancom-jira-ce-report-admin-page':
+        return <ConfigPage />;
+      case 'ancom-jira-ce-report-issue-action':
+        return <ReportPage />;
+      default:
+        return <div>Unknown context</div>;
+    }
+  };
+
+  return (
+    <div>
+      {renderContent()}
+    </div>
+  );
 }
 
 export default App;
