@@ -14,12 +14,12 @@ const ConfigPage = () => {
     const [sectionsOpen, setSectionsOpen] = useState({
         tempoAuth: true,
         errorLog: true,
-        jiraSignatures: true,
-        tempoKey: true
+        jiraSignatures: false,
+        tempoKey: false
     });
 
     useEffect(() => {
-        invoke('getTempoKey').then(setTempoKey).catch(setGlobalError);
+       //invoke('getTempoKey').then(setTempoKey).catch(setGlobalError);
         invoke('getTempoAuthData').then(setTempoAuthData).catch(setGlobalError);
         invoke('getJiraUserSignatures').then(setJiraUserSignatures).catch(setGlobalError);
     }, []);
@@ -34,7 +34,10 @@ const ConfigPage = () => {
     };
 
     const storeTempoKey = () => {
-        invoke("setTempoKey", document.getElementById('tempo-key-input').value);
+        setTempoKey(false);
+        invoke("setTempoKey", document.getElementById('tempo-key-input').value).then(setTempoKey).then(k=>{
+            alert("Tempo Key stored successfully");
+        }).catch(setGlobalError);
     };
 
     const testTempoKey = () => {
@@ -44,9 +47,15 @@ const ConfigPage = () => {
     };
 
     const renewTempoKey = () => {
-        invoke("renewTempoKey", document.getElementById('tempo-key-input').value)
-            .then(setTempoKeyTestResults)
-            .catch(e => setTempoKeyTestResults("Failed to renew: " + e.message));
+        invoke("renewTempoKey").then((r,rr,rrr)=>{
+            alert("Tempo Key renewed successfully: "+ JSON.stringify([r,rr,rrr]));
+            setTempoKeyTestResults(r);
+            invoke('getTempoAuthData').then(setTempoAuthData).catch(setGlobalError);
+            
+        }).catch(e =>{ 
+            alert(e.message); 
+            setTempoKeyTestResults("Failed to renew: " + e.message);
+        });
     };
 
     const handleCurrentJiraUserSignatureAccept = () => {
@@ -74,21 +83,36 @@ const ConfigPage = () => {
         }
     }
 
+    function getInputValue(selector){
+        let forminput = document.querySelector(selector);
+        return forminput ? forminput.value : null;
+    }
+
     const handleTempoAuthDataSubmit = () => {
+
+
+
         const payload = {
-            code: document.querySelector('input[name="code"]').value,
-            client_id: document.querySelector('input[name="client_id"]').value,
-            client_secret: document.querySelector('input[name="client_secret"]').value,
-            redirect_uri: document.querySelector('input[name="redirect_uri"]').value,
+            code: getInputValue('input[name="code"]'),
+            client_id: getInputValue('input[name="client_id"]'),
+            client_secret: getInputValue('input[name="client_secret"]'),
+            redirect_uri: getInputValue('input[name="redirect_uri"]'),
+            grant_type: getInputValue('input[name="grant_type"]'),
+            access_token: getInputValue('input[name="access_token"]'),
+            refresh_token: getInputValue('input[name="refresh_token"]'),
+            token_type: getInputValue('input[name="token_type"]'),
+            expires_in: getInputValue('input[name="expires_in"]')
         };
 
         invoke('setTempoAuthData', payload)
             .then(response => {
                 console.log('Tempo Auth Data set successfully', response);
+                alert("Tempo Auth Data set successfully");
                 invoke('getTempoAuthData').then(setTempoAuthData).catch(setGlobalError);
             })
             .catch(error => {
                 console.error('Error setting Tempo Auth Data', error);
+                alert("Error setting Tempo Auth Data: " + error.message);
                 setGlobalError(error);
             });
     };
@@ -133,7 +157,7 @@ const ConfigPage = () => {
                         Tempo Authentication {sectionsOpen.tempoAuth ? '▼' : '▶'}
                     </h2>
                     <CSSTransition in={sectionsOpen.tempoAuth && !!tempoAuthData} timeout={300} classNames="fade" unmountOnExit>
-                        <div>
+                        <fieldset style={{}}>
                             <legend>Update Tempo Authentication Data</legend>
                             {Object.entries(tempoAuthData || {}).map(([key, value]) => (
                                 <div key={key} style={{marginBottom: '10px'}}>
@@ -169,7 +193,21 @@ const ConfigPage = () => {
                                     fontWeight: 600
                                 }}
                             >Save Tempo Data</button>
-                        </div>
+                            <button 
+                                    onClick={renewTempoKey}
+                                    style={{
+                                        backgroundColor: '#3498db',
+                                        color: 'white',
+                                        padding: '8px 15px',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        transition: 'background-color 0.3s, transform 0.2s',
+                                        fontSize: '14px',
+                                        fontWeight: 600
+                                    }}
+                                >Renew Key</button>
+                        </fieldset>
                     </CSSTransition>
                 </li>
 
@@ -330,6 +368,7 @@ const ConfigPage = () => {
                     </h2>
                     <CSSTransition in={sectionsOpen.tempoKey} timeout={300} classNames="fade" unmountOnExit>
                         <div>
+                        <fieldset style={{backgroundColor: tempoKey === false ? "red": "inherit"}}>
                             <label htmlFor="tempo-key-input" style={{display: 'block', marginBottom: '5px'}}>Tempo Key</label>
                             <input 
                                 id="tempo-key-input" 
@@ -350,6 +389,7 @@ const ConfigPage = () => {
                                 <button 
                                     onClick={storeTempoKey}
                                     style={{
+                                        disabled: tempoKey === false,
                                         backgroundColor: '#3498db',
                                         color: 'white',
                                         padding: '8px 15px',
@@ -375,20 +415,7 @@ const ConfigPage = () => {
                                         fontWeight: 600
                                     }}
                                 >Test Key</button>
-                                <button 
-                                    onClick={renewTempoKey}
-                                    style={{
-                                        backgroundColor: '#3498db',
-                                        color: 'white',
-                                        padding: '8px 15px',
-                                        border: 'none',
-                                        borderRadius: '4px',
-                                        cursor: 'pointer',
-                                        transition: 'background-color 0.3s, transform 0.2s',
-                                        fontSize: '14px',
-                                        fontWeight: 600
-                                    }}
-                                >Renew Key</button>
+                                
                             </div>
 
                             <CSSTransition in={!!tempoKeyTestResults} timeout={300} classNames="fade" unmountOnExit>
@@ -405,7 +432,9 @@ const ConfigPage = () => {
                                     {JSON.stringify(tempoKeyTestResults, null, 2)}
                                 </pre>
                             </CSSTransition>
+                        </fieldset>
                         </div>
+
                     </CSSTransition>
                 </li>
             </ul>

@@ -26,13 +26,10 @@ const ancomreportresolver = new Resolver();
 
 async function checkAndRenewOAuthToken() {
   let tempoAuthData = await storage.getSecret('tempo-auth-data');
-  if (!tempoAuthData || !tempoAuthData.refresh_token || !tempoAuthData.expires_in || !tempoAuthData.timestamp) {
-    console.error("Incomplete auth data or refresh token not available.");
-    return null;
-  }
 
   const urlBody = new URLSearchParams();
   urlBody.append("grant_type", "refresh_token");
+  urlBody.append("redirect_uri", tempoAuthData.redirect_uri);
   urlBody.append("refresh_token", tempoAuthData.refresh_token);
   urlBody.append("client_id", tempoAuthData.client_id);
   urlBody.append("client_secret", tempoAuthData.client_secret);
@@ -46,24 +43,24 @@ async function checkAndRenewOAuthToken() {
     });
 
     if (!response.ok) {
-      console.error("Failed to renew OAuth token", response.statusText);
-      return null;
+      console.error("Failed to renew OAuth token:", JSON.stringify({ body: urlBody.toString(), status: response.statusText }));
+      throw new Error(response.statusText);
     }
 
     const tokenData = await response.json();
-    console.debug("Renewed OAuth Token Data", JSON.stringify(tokenData));
+    console.log("Renewed OAuth Token Data", JSON.stringify(tokenData));
 
-    const updatedAuthData = { 
-      ...tempoAuthData, 
-      ...tokenData, 
-      timestamp: Math.floor(Date.now() / 1000) 
+    const updatedAuthData = {
+      ...tempoAuthData,
+      ...tokenData,
+      timestamp: Math.floor(Date.now() / 1000)
     };
     await storage.setSecret('tempo-auth-data', updatedAuthData);
 
     return updatedAuthData;
   } catch (error) {
     console.error("Error renewing OAuth token", error);
-    return null;
+    throw new Error(error);
   }
 }
 
@@ -87,6 +84,10 @@ ancomreportresolver.define('setTempoAuthData', async ({ payload }) => {
   urlBody.append("client_secret", payload.client_secret);
   urlBody.append("grant_type", grantType);
   urlBody.append("redirect_uri", payload.redirect_uri);
+  urlBody.append("refresh_token", payload.refresh_token);
+  urlBody.append("authorization_code", payload.code);
+  urlBody.append("access_token", payload.access_token);
+
 
   try {
     const response = await api.fetch("https://api.tempo.io/oauth/token/", {
@@ -102,23 +103,23 @@ ancomreportresolver.define('setTempoAuthData', async ({ payload }) => {
 
     const tokenData = await response.json();
     console.debug("tokenData", JSON.stringify(tokenData));
-    
-    const mergedPayload = { 
-      ...payload, 
-      ...tokenData, 
-      timestamp: Math.floor(Date.now() / 1000) 
+
+    const mergedPayload = {
+      ...payload,
+      ...tokenData,
+      timestamp: Math.floor(Date.now() / 1000)
     };
     await storage.setSecret('tempo-auth-data', mergedPayload);
 
     return mergedPayload;
   } catch (error) {
     console.error("setTempoAuthData", error);
-    return null;
+    throw new Error(error);
   }
 });
 
 ancomreportresolver.define('renewTempoKey', async (req) => {
-  console.debug("renewTempoKey", req);
+
   return await checkAndRenewOAuthToken();
 });
 
@@ -126,7 +127,7 @@ ancomreportresolver.define('getTempoKey', async (req) => {
   return await getTempoKey();
 });
 
-ancomreportresolver.define('testTempoKey', async ({payload}) => {
+ancomreportresolver.define('testTempoKey', async ({ payload }) => {
   let token = await getTempoKey();
   if (!token) {
     throw new Error("No valid Tempo key available");
@@ -134,7 +135,7 @@ ancomreportresolver.define('testTempoKey', async ({payload}) => {
   console.debug("testTempoKey", token);
   var requestOptions = {
     method: 'GET',
-    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json"},
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
     redirect: 'follow'
   };
 
@@ -144,7 +145,7 @@ ancomreportresolver.define('testTempoKey', async ({payload}) => {
       throw new Error("Failed to get tempo configuration: " + response.statusText);
     }
     let tempoTestResults = await response.json();
-    console.debug("tempoTestResults", tempoTestResults);
+    //console.debug("tempoTestResults", tempoTestResults);
     return tempoTestResults || 'Fail...';
   }
   catch (ee) {
@@ -155,13 +156,21 @@ ancomreportresolver.define('testTempoKey', async ({payload}) => {
 
 ancomreportresolver.define('setTempoKey', async ({ payload }) => {
   // This function is no longer needed as we're managing the token through OAuth
-  console.warn("setTempoKey is deprecated. Use setTempoAuthData instead.");
-  return { message: "This function is deprecated. Use setTempoAuthData instead." };
+  let tempoAuthData = await storage.getSecret('tempo-auth-data');
+  if (!tempoAuthData) {
+    console.error("No tempo auth data available.");
+    return null;
+  }
+  let r = await storage.setSecret('tempo-auth-data', { ...tempoAuthData, access_token: payload });
+  let tempoAuthData2 = await storage.getSecret('tempo-auth-data');
+  return tempoAuthData2.access_token;
 });
 
 // ... rest of the code remains unchanged
 
 const getFormattedWorklogs = async (req) => {
+  var limit = req.payload.limit || 50;
+  var offset = req.payload.offset || 0;
   const tempoKey = await getTempoKey();
   if (!tempoKey) {
     throw new Error("No valid Tempo key available");
@@ -177,28 +186,36 @@ const getFormattedWorklogs = async (req) => {
   };
 
   try {
-    const response = await api.fetch(`https://api.tempo.io/4/worklogs?issueId=${req.context.extension.issue.id}`, requestOptions);
+    const response = await api.fetch(`https://api.tempo.io/4/worklogs?issueId=${req.context.extension.issue.id}&limit=${limit}&offset=${offset}`, requestOptions);
     if (!response.ok) {
       throw new Error(`Failed to fetch worklogs: ${response.statusText}`);
     }
 
     const worklogsData = await response.json();
-    
+
     // Format the worklogs
-    const formattedWorklogs = worklogsData.worklogs.map(worklog => {
+    const formattedWorklogs = worklogsData.results.map(worklog => {
       const startDateTime = new Date(worklog.startDate + 'T' + worklog.startTime);
       const endDateTime = new Date(startDateTime.getTime() + worklog.timeSpentSeconds * 1000);
-      
+      var started = new Date(worklog.startDate);
+      started.setTime(worklog.startTime);
+      var ended = new Date(worklog.startDate);
+      ended.setSeconds(worklog.timeSpentSeconds);
+      ["who", "worker", "date", "time-in", "time-out", "summary"]
       return {
+        who: worklog.author.accountId,
+        worker: worklog.author.accountId,
         date: worklog.startDate,
-        who: worklog.author.displayName,
         'time-in': startDateTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
         'time-out': endDateTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-        summary: worklog.description || 'No description provided',...worklog
+        summary: worklog.description || 'No description provided',
+        started,
+        ended,
+        ...worklog
       };
     });
 
-    return {worklogs:formattedWorklogs};
+    return { worklogs: formattedWorklogs };
   } catch (error) {
     console.error("Error fetching worklogs:", error);
     throw new Error(`Failed to fetch worklogs: ${error.message}`);
@@ -207,6 +224,7 @@ const getFormattedWorklogs = async (req) => {
 
 // Add a new resolver for getting formatted worklogs
 ancomreportresolver.define('getReportData', async (req) => {
+  throw new Error("getReportData is not implemented");
   try {
     return await getFormattedWorklogs(req);
   } catch (error) {
@@ -219,19 +237,47 @@ ancomreportresolver.define('getReportData', async (req) => {
 });
 
 
+
+const resolveJiraAccountMapping = {};
+
+async function resolveJiraAccount(jiraSignatures,accountId) {
+  //todo: storage of accountId;
+  //return 
+  if (resolveJiraAccountMapping[accountId]) return resolveJiraAccountMapping[accountId];
+  let foundSignature = jiraSignatures.find(js => js.accountId == accountId);
+  if (!foundSignature) {
+
+    if (!resolveJiraAccountMapping[accountId]) {
+      console.warn("resolveJiraAccount", "No signature found for accountId", accountId);
+    }
+    var retrievedJiraUser = (await api.asApp().requestJira(route`/rest/api/2/user?accountId=${accountId}`).then(r => r.json()));
+    let s = { accountId, displayName: retrievedJiraUser.displayName, b64Signature: null };
+    resolveJiraAccountMapping[accountId] = resolveJiraAccountMapping[accountId] || s;
+
+    jiraSignatures.push(s);
+    await storage.set('jira-user-signatures', jiraSignatures);
+
+    return s;
+  }
+  else {
+    resolveJiraAccountMapping[accountId] = foundSignature;
+  }
+  return foundSignature;
+}
+//const jiraUserSignatures = [];
 const getJiraUserSignatures = async ({ payload, context }) => {
   
   try {
     var users = [];
-    var jiraUsers = (await api.asApp().requestJira(route`/rest/api/3/users`).then(r => r.json())).filter(user=>user.accountType != 'app');
-    
-    users.splice(0, 0, ...jiraUsers);
-    
+    var jiraUsers = (await api.asApp().requestJira(route`/rest/api/3/users`).then(r => r.json())).filter(user => user.accountType != 'app');
 
-    
+    users.splice(0, 0, ...jiraUsers);
+
+
+
     var jiraUserSignatures = (await storage.get('jira-user-signatures')) || [];
 
-    
+
     return users.map(user => {
       let userSignature = jiraUserSignatures.find(jus => jus.accountId == user.accountId);
       let b64Signature = userSignature ? userSignature.b64Signature : '.........';
@@ -239,17 +285,17 @@ const getJiraUserSignatures = async ({ payload, context }) => {
     });
   }
   catch (e) {
-    console.error("getJiraUserSignatures",e);
-    return [{accountId:"fake",displayName:"error",b64Signature:JSON.stringify(e||'error')}];
+    console.error("getJiraUserSignatures", e);
+    throw e;
   }
 }
 
 ancomreportresolver.define('getJiraUserSignatures', getJiraUserSignatures);
 ancomreportresolver.define('setJiraUserSignatures', async ({ payload, context }) => {
-  console.debug("setJiraUserSignatures", payload);
+  //console.debug("setJiraUserSignatures", payload);
   if (typeof payload == "string") payload = JSON.parse(payload);
 
-  
+
 
   return await storage.set('jira-user-signatures', payload);
 
@@ -257,14 +303,14 @@ ancomreportresolver.define('setJiraUserSignatures', async ({ payload, context })
 
 
 const fetchIssueData = async (issueIdOrKey) => {
-  console.debug("fetchIssueData", issueIdOrKey);
+  //console.debug("fetchIssueData", issueIdOrKey);
   const issueData = await api.asApp().requestJira(route`./rest/api/3/issue/${issueIdOrKey}`, {
     method: 'GET',
     headers: {
       'Accept': 'application/json',
       'X-Atlassian-Token': 'no-check'
     }
-  }).then(res => res.json()).catch(e => console.error("fetchIssueData",e));
+  }).then(res => res.json()).catch(e => console.error("fetchIssueData", e));
 
 
   console.debug("fetchIssueData : got data");
@@ -279,31 +325,42 @@ const fetchIssueWorklogs = async (issueIdOrKey) => {
       'Accept': 'application/json',
       'X-Atlassian-Token': 'no-check'
     }
-  }).then(res => res.json()).catch(e => console.error("fetchIssueWorklogs",e));
+  }).then(res => res.json()).catch(e => console.error("fetchIssueWorklogs", e));
 
 
   console.debug("fetchIssueWorklogs : got data");
   return fetchIssueWorklogs;
 };
 
-ancomreportresolver.define('getFormattedWorklogs', async ({ payload, context }) => {
 
 
+ancomreportresolver.define('getJiraUserSignature', async function (req) {
+  const jiraSignatures = await getJiraUserSignatures({ payload: null, context: req.context });
+  return await resolveJiraAccount(jiraSignatures,req.payload);
+});
+ancomreportresolver.define('getFormattedWorklogs', getFormattedWorklogs);
+ancomreportresolver.define('getFormattedWorklogsOLD', async (req) => {
+  let offset = req.payload.offset || 0;
+  let limit = req.payload.limit || 50;
+  console.log("getFormattedWorklogs:req", req);
+  console.debug("limit and offset", limit, offset);
+  let context = req.context;
   try {
     if (!(context && context.extension && context.extension.issue)) return Promise.resolve("{}");
-    var issueWorklogs = await fetchIssueWorklogs(context.extension.issue.key);
+    var issueWorklogs = await fetchIssueWorklogs(req.context.extension.issue.key);
     //console.debug("issueWorklogs", JSON.stringify(issueWorklogs));
     if (!issueWorklogs || !issueWorklogs.worklogs) {
       console.error("getFormattedWorklogs:!issueWorklogs", "Failed to get issue worklogs");
-      return new Error("Failed to get issue worklogs");
+      throw new Error("Failed to get issue worklogs");
     }
     var jiraWorklogIds = issueWorklogs && issueWorklogs.worklogs && issueWorklogs.worklogs.map(wl => wl.id);
-    
+
     var tempoLogs = { worklogs: [] };
     var tempoKey = await getTempoKey();
     if (!tempoKey) {
 
-      console.error("getFormattedWorklogs:!tempoKey",{ message: "No key available for tempo!" });
+      console.error("getFormattedWorklogs:!tempoKey", { message: "No key available for tempo!" });
+      throw new Error("No key available for tempo!");
     }
     else {
       var jTtRequestOptions = {
@@ -313,25 +370,26 @@ ancomreportresolver.define('getFormattedWorklogs', async ({ payload, context }) 
         redirect: 'follow'
       };
       var errorMessage = null;
-      var jiraToTempoMapping = !!tempoKey && await api.fetch("https://api.tempo.io/4/worklogs/jira-to-tempo?limit=5000", jTtRequestOptions).then(r => r.json()).catch(e => { console.error("getFormattedWorklogs:jira-to-tempo",e); errorMessage = e; });
+      var jiraToTempoMapping = !!tempoKey && await api.fetch("https://api.tempo.io/4/worklogs/jira-to-tempo?limit=5000", jTtRequestOptions).then(r => r.json()).catch(e => { console.error("getFormattedWorklogs:jira-to-tempo", e); errorMessage = e; });
       //let k = "QuVLrDU3Lc72pCyqlKYGso_vxLXIPtlx5ub7lCSJEK8-eu";
-  
-      
-  
+
+
+
       if (!jiraToTempoMapping || (jiraToTempoMapping.errors && jiraToTempoMapping.errors.length > 0)) {
-        console.error("getFormattedWorklogs",jiraToTempoMapping.errors.length ? JSON.stringify(jiraToTempoMapping.errors): "Failed to get jiraToTempoMapping");
+        console.error("getFormattedWorklogs", jiraToTempoMapping.errors.length ? JSON.stringify(jiraToTempoMapping.errors) : "Failed to get jiraToTempoMapping");
         jiraToTempoMapping = { worklogs: [] };
-        console.error("https://api.tempo.io/4/worklogs/jira-to-tempo?limit=5000", JSON.stringify(jTtRequestOptions,null,'\t'));
-      }  
-  
+        console.error("https://api.tempo.io/4/worklogs/jira-to-tempo?limit=5000", JSON.stringify(jTtRequestOptions, null, '\t'));
+        //throw new Error("Failed to get jiraToTempoMapping");
+      }
+
       var requestOptions = {
         method: 'GET',
         headers: { "Authorization": `Bearer ${tempoKey}` },
         redirect: 'follow'
       };
 
-      var $tempoLogs = !!tempoKey && await api.fetch(`https://api.tempo.io/4/worklogs?issueId=${context.extension.issue.id}&limit=5000`, requestOptions).then(r => r.json()).catch(e => { console.error("fetch tempo logs by issueKey",e); errorMessage = e; });
-  
+      var $tempoLogs = !!tempoKey && await api.fetch(`https://api.tempo.io/4/worklogs?issueId=${context.extension.issue.id}&limit=${limit}&offset=${offset}`, requestOptions).then(r => r.json()).catch(e => { console.error("fetch tempo logs by issueKey", e); errorMessage = e; });
+
       if (!$tempoLogs) {
         console.error("getFormattedWorklogs:!tempoLogs", "Failed to get tempo logs");
         tempoLogs = { results: [] };
@@ -340,29 +398,16 @@ ancomreportresolver.define('getFormattedWorklogs', async ({ payload, context }) 
         tempoLogs = $tempoLogs;
       }
     }
-    console.debug("getFormattedWorklogs", context.extension.issue);
-    
-
-    
+    console.debug("getFormattedWorklogs:issue", context.extension.issue);
 
 
-    const jiraSignatures = await getJiraUserSignatures({ payload: null, context });
 
 
-    async function resolveJiraAccount(accountId) {
-      //todo: storage of accountId;
-      //return 
-      let foundSignature = jiraSignatures.find(js => js.accountId == accountId);
-      if (!foundSignature) {
-        console.error("resolveJiraAccount", "No signature found for accountId", accountId);
-        var retrievedJiraUser = (await api.asApp().requestJira(route`/rest/api/2/user?accountId=${accountId}`).then(r => r.json()));
-        jiraSignatures.push({ accountId, displayName: retrievedJiraUser.displayName, b64Signature: null });
-        await storage.set('jira-user-signatures', jiraSignatures);
 
-        return { accountId, displayName: retrievedJiraUser.displayName, b64Signature: null };
-      }
-      return foundSignature;
-    }
+
+
+
+
 
     tempoLogs = await Promise.all(tempoLogs.results.map(async (tempoLog) => {
       //console.debug("getting Jira Display Name", tempoLog.author.self);
@@ -382,14 +427,17 @@ ancomreportresolver.define('getFormattedWorklogs', async ({ payload, context }) 
     }));
 
     console.debug("TEMPO Logs found", tempoLogs.length);
-    console.debug("jiraToTempoMapping", JSON.stringify(jiraToTempoMapping,null,'\t'));
+    //console.debug("jiraToTempoMapping", JSON.stringify(jiraToTempoMapping,null,'\t'));
+
+
+
     function mapWorkLog(worklog) {
       //console.debug("worklog", worklog.id);
       try {
-        var result  = jiraToTempoMapping && jiraToTempoMapping.results && jiraToTempoMapping.results.find(rm => rm.jiraWorklogId == worklog.id);
-      
+        var result = jiraToTempoMapping && jiraToTempoMapping.results && jiraToTempoMapping.results.find(rm => rm.jiraWorklogId == worklog.id);
+
         var tempoWorklogId = result && result.tempoWorklogId;
-        console.debug("mapWorkLog found tempo log ? ", JSON.stringify(result || null));
+        //console.debug("mapWorkLog found tempo log ? ", JSON.stringify(result || null));
         var tempoLog = tempoWorklogId && tempoLogs.find(tempoWorklog => tempoWorklog.tempoWorklogId == tempoWorklogId);
         //console.debug("mapWorkLog found tempo log ? ", JSON.stringify(tempoLog || null));
         var started = new Date(worklog.started);
@@ -399,7 +447,8 @@ ancomreportresolver.define('getFormattedWorklogs', async ({ payload, context }) 
         return {
           who: (tempoLog && tempoLog.author.displayName) || worklog.author.displayName,
           worker: (tempoLog && tempoLog.author.displayName) || worklog.author.displayName,
-          signature: (tempoLog && tempoLog.author.b64Signature) || null,
+          accountId: tempoLog.author.accountId || worklog.author.accountId,
+          //signature: (tempoLog && tempoLog.author.b64Signature) || null,
           from: started.toLocaleString(),
           "date": `${started.getMonth() + 1}/${started.getDate()}`,
           "time-in": started.toTimeString().replace(/(\d\d:\d\d):\d\d.*/, "$1"),
@@ -417,7 +466,7 @@ ancomreportresolver.define('getFormattedWorklogs', async ({ payload, context }) 
         return {
           who: worklog.author.displayName,
           worker: worklog.author.displayName,
-          
+
           from: started.toLocaleString(),
           "date": `${started.getMonth() + 1}/${started.getDate()}`,
           "time-in": started.toTimeString().replace(/(\d\d:\d\d):\d\d.*/, "$1"),
@@ -431,7 +480,7 @@ ancomreportresolver.define('getFormattedWorklogs', async ({ payload, context }) 
     }
     var resolvedWorklogs = issueWorklogs && issueWorklogs.worklogs.map(mapWorkLog);
     //console.debug("resolvedWorklogs",resolvedWorklogs);
-    return {worklogs:resolvedWorklogs, timeSpentSeconds: resolvedWorklogs.reduce((acc, wl) => acc + wl.timeSpentSeconds, 0)};
+    return { worklogs: resolvedWorklogs, timeSpentSeconds: resolvedWorklogs.reduce((acc, wl) => acc + wl.timeSpentSeconds, 0) };
   }
   catch (e) {
     throw e;
