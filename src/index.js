@@ -194,18 +194,26 @@ const getFormattedWorklogs = async (req) => {
     const worklogsData = await response.json();
 
     // Format the worklogs
-    const formattedWorklogs = worklogsData.results.map(worklog => {
-      const startDateTime = new Date(worklog.startDate + 'T' + worklog.startTime);
+    const formattedWorklogs = worklogsData.results.map((worklog,iWorklog) => {
+      const originalStartDate = worklog.startDate || "unknown";
+      const startDateTime = new Date(Date.parse(`${worklog.startDate}T${worklog.startTime}`));
+      //startDateTime.setTime(worklog.startTime);
+      //startDateTime.setHours(startDateTime.getHours() - 5);
       const endDateTime = new Date(startDateTime.getTime() + worklog.timeSpentSeconds * 1000);
       var started = new Date(worklog.startDate);
       started.setTime(worklog.startTime);
+      
       var ended = new Date(worklog.startDate);
       ended.setSeconds(worklog.timeSpentSeconds);
+
+      if (iWorklog == 0) {
+        console.log("Dates Info",JSON.stringify({worklog,originalStartDate,startDateTime,endDateTime,started,ended},null,'\t'));
+      }
       ["who", "worker", "date", "time-in", "time-out", "summary"]
       return {
         who: worklog.author.accountId,
         worker: worklog.author.accountId,
-        date: worklog.startDate,
+        date: startDateTime.toLocaleDateString(), //.replace(/\D\d\d\d\d$/,""),//'en-US',{month: '2-digit', day: '2-digit', timeZone: 'America/New_York'}),
         'time-in': startDateTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
         'time-out': endDateTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
         summary: worklog.description || 'No description provided',
@@ -214,7 +222,7 @@ const getFormattedWorklogs = async (req) => {
         ...worklog
       };
     });
-
+    //console.log("First log", JSON.stringify(formattedWorklogs[0],null,'\t'));
     return { worklogs: formattedWorklogs };
   } catch (error) {
     console.error("Error fetching worklogs:", error);

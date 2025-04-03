@@ -204,7 +204,10 @@ const ReportPage = () => {
         startY -= 30;
         let header = ['Date', 'Time\nIn', 'Worker', 'Signature', 'Time\nOut', 'Lunch', 'Total Reg hrs', 'OT\nhrs', 'JLA\n&\nID\nConfirmed\nby\nschool\nstaff\ninitials', 'HCPS representative signature and print and title'];
         let rowsFromWorklog = worklogData.map(r => { r["hcps-signature"] = `Title  ${signerTitle}    Print  ${signerPrint}\nSignature`; return r; })
-            .map(r => { return [r.date, r["time-in"], r["worker"], "", r["time-out"], "", "", "", "", r["hcps-signature"]] });
+            .map(r => {
+               
+                return [r['date'].replace(/\D\d\d\d\d$/,""), r["time-in"], r["worker"], "", r["time-out"], "", "", "", "", r["hcps-signature"]] 
+            });
 
         let tableData = [header].concat(rowsFromWorklog);
 
@@ -217,7 +220,7 @@ const ReportPage = () => {
             }
 
             row.forEach(async (cell, cellIndex) => {
-
+                if (cellIndex == 0) cell = cell.replace(/\D\d\d\d\d$/, "");
 
 
 
